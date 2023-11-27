@@ -37,3 +37,8 @@ config CXL
     bool
     default y if PCI_EXPRESS && PXB
     depends on PCI_EXPRESS && MSI_NONBROKEN && PXB
+
+config SIMBRIDGE
+    bool
+    default y if PCI_DEVICES
+    depends on PCI_EXPRESS && MSI_NONBROKEN
