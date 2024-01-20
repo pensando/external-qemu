@@ -8,3 +8,4 @@ common-obj-$(CONFIG_I82801B11) += i82801b11.o
 common-obj-$(CONFIG_DEC_PCI) += dec.o
 # Sun4u
 common-obj-$(CONFIG_SIMBA) += simba.o
+common-obj-$(CONFIG_SIMBRIDGE) += simbridge.o simbridge_utils.o
