@@ -24,6 +24,7 @@
 #CONFIG_TPM_TIS_ISA=n
 #CONFIG_VTD=n
 #CONFIG_SGX=n
+CONFIG_SIMBRIDGE=y
 
 # Boards are selected by default, uncomment to keep out of the build.
 # CONFIG_ISAPC=n

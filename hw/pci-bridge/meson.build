@@ -12,4 +12,7 @@ pci_ss.add(when: 'CONFIG_CXL', if_true: files('cxl_root_port.c', 'cxl_upstream.c
 # Sun4u
 pci_ss.add(when: 'CONFIG_SIMBA', if_true: files('simba.c'))
 
+# AMD Pensando simbridge
+pci_ss.add(when: 'CONFIG_SIMBRIDGE', if_true: files('simbridge.c', 'simbridge_utils.c'))
+
 system_ss.add_all(when: 'CONFIG_PCI', if_true: pci_ss)
