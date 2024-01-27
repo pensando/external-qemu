@@ -8,6 +8,11 @@ config PCIE_PCI_BRIDGE
     default y if PCIE_PORT
     depends on PCIE_PORT
 
+config SIMBRIDGE
+    bool
+    default y if PCI_DEVICES
+    depends on PCI_EXPRESS && MSI_NONBROKEN
+
 config PXB
     bool
     default y if Q35 || ARM_VIRT
