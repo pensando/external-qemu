@@ -32,6 +32,10 @@
 #define XIO3130_EXP_OFFSET              0x90
 #define XIO3130_AER_OFFSET              0x100
 
+#define ADDR_ALIGN_BYTES	4
+#define LOG_4B_UNALIGNED(addr) \
+        QEMU_IS_ALIGNED(addr, ADDR_ALIGN_BYTES) ? "" : " (unaligned)"
+
 typedef struct SimBridge {
     PCIEPort parent;
 
@@ -295,12 +299,12 @@ simdevice_memrd(void *opaque, hwaddr addr, unsigned size)
     /* add bar as model expects physical address */
     addr += simbar->sd->bar[baridx].addr;
     if (simc_memrd(bdf, baridx, addr, size, &val) < 0) {
-        dbgprintf("simdevice_memrd(0x%"PRIx64", 0x%x) failed\n",
-                  addr, size);
+        dbgprintf("simdevice_memrd(0x%"PRIx64", 0x%x) failed%s\n",
+                  addr, size, LOG_4B_UNALIGNED(addr));
         val = 0xffffffffffffffffULL;
     } else {
-        dbgprintf("simdevice_memrd(0x%"PRIx64", 0x%x) = 0x%"PRIx64"\n",
-                  addr, size, val);
+        dbgprintf("simdevice_memrd(0x%"PRIx64", 0x%x) = 0x%"PRIx64"%s\n",
+                  addr, size, val, LOG_4B_UNALIGNED(addr));
     }
     return val;
 }
@@ -315,11 +319,11 @@ simdevice_memwr(void *opaque, hwaddr addr, uint64_t val, unsigned size)
     /* add bar as model expects physical address */
     addr += simbar->sd->bar[baridx].addr;
     if (simc_memwr(bdf, baridx, addr, size, val) < 0) {
-        dbgprintf("simdevice_memwr(0x%"PRIx64", 0x%x, 0x%"PRIx64") failed\n",
-                  addr, size, val);
+        dbgprintf("simdevice_memwr(0x%"PRIx64", 0x%x, 0x%"PRIx64") failed%s\n",
+                  addr, size, val, LOG_4B_UNALIGNED(addr));
     } else {
-        dbgprintf("simdevice_memwr(0x%"PRIx64", 0x%x, 0x%"PRIx64")\n",
-                  addr, size, val);
+        dbgprintf("simdevice_memwr(0x%"PRIx64", 0x%x, 0x%"PRIx64")%s\n",
+                  addr, size, val, LOG_4B_UNALIGNED(addr));
     }
 }
 
@@ -335,10 +339,12 @@ simdevice_iord(void *opaque, hwaddr addr, unsigned size)
     addr += simbar->sd->bar[baridx].addr;
 
     if (simc_iord(bdf, baridx, addr, size, &val) < 0) {
-        dbgprintf("simdevice_iord(0x%"PRIx64", 0x%x) failed\n", addr, size);
+        dbgprintf("simdevice_iord(0x%"PRIx64", 0x%x) failed%s\n",
+                  addr, size, LOG_4B_UNALIGNED(addr));
         val = 0xffffffff;
     } else {
-        dbgprintf("simdevice_iord(0x%"PRIx64", 0x%x)\n", addr, size);
+        dbgprintf("simdevice_iord(0x%"PRIx64", 0x%x)%s\n",
+                  addr, size, LOG_4B_UNALIGNED(addr));
     }
     return val;
 }
@@ -353,11 +359,11 @@ simdevice_iowr(void *opaque, hwaddr addr, uint64_t val, unsigned size)
     /* add bar as model expects physical address */
     addr += simbar->sd->bar[baridx].addr;
     if (simc_iowr(bdf, baridx, addr, size, val) < 0) {
-        dbgprintf("simdevice_iowr(0x%"PRIx64", 0x%x, 0x%"PRIx64") failed\n",
-                  addr, size, val);
+        dbgprintf("simdevice_iowr(0x%"PRIx64", 0x%x, 0x%"PRIx64") failed%s\n",
+                  addr, size, val, LOG_4B_UNALIGNED(addr));
     } else {
-        dbgprintf("simdevice_iowr(0x%"PRIx64", 0x%x, 0x%"PRIx64")\n",
-                  addr, size, val);
+        dbgprintf("simdevice_iowr(0x%"PRIx64", 0x%x, 0x%"PRIx64")%s\n",
+                  addr, size, val, LOG_4B_UNALIGNED(addr));
     }
 }
 
