@@ -876,6 +876,28 @@ simbridge_poll_for_server(void *opaque)
 }
 
 static void
+simbridge_advance_time(void *opaque)
+{
+    SimBridge *sb = opaque;
+    static QEMUTimer *server_advance_timer;
+
+    /* allocate a timer */
+    if (server_advance_timer == NULL) {
+        server_advance_timer = timer_new_ms(QEMU_CLOCK_VIRTUAL,
+                                            simbridge_advance_time, sb);
+        if (server_advance_timer == NULL) {
+            return;
+        }
+    } else {
+        if (simc_step_time(1000))
+            dbgprintf("simc_step_time failed\n");
+    }
+    /* advance again in 1s */
+    timer_mod(server_advance_timer,
+              qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 1000);
+}
+
+static void
 simbridge_read_msg(void *opaque)
 {
     SimBridge *sb = opaque;
@@ -946,6 +968,9 @@ static void simbridge_init(SimBridge *sb)
          * messages will arrive unsolicited.
          */
         qemu_set_fd_handler(sb->simfd, simbridge_read_msg, NULL, sb);
+
+        /* Start advancement of model timers */
+        simbridge_advance_time(sb);
     } else {
         fprintf(stderr,
                 "SimBridge: No server detected. "
