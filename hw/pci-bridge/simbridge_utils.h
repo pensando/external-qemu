@@ -18,6 +18,7 @@ typedef enum simmsgtype_e {
     SIMMSG_SYNC_REQ,
     SIMMSG_SYNC_ACK,
     SIMMSG_SYNC_REL,
+    SIMMSG_STEP_TIME,
 } simmsgtype_t;
 
 #define PACKED __attribute__((packed))
@@ -64,6 +65,9 @@ typedef struct simmsg_s {
             u_int32_t size;
             u_int8_t  error;
         } PACKED writeres;
+        struct {
+            u_int32_t delta_ms;
+        } PACKED step_time;
         struct {
             /* room to grow without breaking existing clients */
             u_int8_t pad[64];
@@ -118,5 +122,6 @@ void simc_discard(size_t size);
 
 int sim_sync_ack(int s, msg_handler_t msg_handler);
 int simc_sync_ack(void);
+int simc_step_time(unsigned delta_ms);
 
 #endif

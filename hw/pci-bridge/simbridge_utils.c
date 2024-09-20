@@ -552,3 +552,19 @@ simc_sync_ack(void)
     if (!simclient.open) return -EBADF;
     return sim_sync_ack(simclient.s, simclient.handler);
 }
+
+int
+simc_step_time(unsigned delta_ms)
+{
+    simmsg_t m = {
+        .msgtype = SIMMSG_STEP_TIME,
+        .u.step_time.delta_ms = delta_ms,
+    };
+
+    if (!simclient.open) return -EBADF;
+
+    if (sim_writen(simclient.s, &m, sizeof(m)) < 0) {
+        return -1;
+    }
+    return 0;
+}
