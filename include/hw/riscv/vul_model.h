@@ -16,45 +16,45 @@
  * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef HW_RISCV_VIRT_H
-#define HW_RISCV_VIRT_H
+#ifndef HW_RISCV_VUL_MODEL_H
+#define HW_RISCV_VUL_MODEL_H
 
 #include "hw/boards.h"
 #include "hw/riscv/riscv_hart.h"
 #include "hw/sysbus.h"
 #include "hw/block/flash.h"
 
-#define VIRT_CPUS_MAX_BITS             9
-#define VIRT_CPUS_MAX                  (1 << VIRT_CPUS_MAX_BITS)
-#define VIRT_SOCKETS_MAX_BITS          2
-#define VIRT_SOCKETS_MAX               (1 << VIRT_SOCKETS_MAX_BITS)
+#define VUL_MODEL_CPUS_MAX_BITS             9
+#define VUL_MODEL_CPUS_MAX                  (1 << VUL_MODEL_CPUS_MAX_BITS)
+#define VUL_MODEL_SOCKETS_MAX_BITS          2
+#define VUL_MODEL_SOCKETS_MAX               (1 << VUL_MODEL_SOCKETS_MAX_BITS)
 
-#define TYPE_RISCV_VIRT_MACHINE MACHINE_TYPE_NAME("virt")
-typedef struct RISCVVirtState RISCVVirtState;
-DECLARE_INSTANCE_CHECKER(RISCVVirtState, RISCV_VIRT_MACHINE,
-                         TYPE_RISCV_VIRT_MACHINE)
+#define TYPE_RISCV_VUL_MODEL_MACHINE MACHINE_TYPE_NAME("vul_model")
+typedef struct RISCVVulModelState RISCVVulModelState;
+DECLARE_INSTANCE_CHECKER(RISCVVulModelState, RISCV_VUL_MODEL_MACHINE,
+                         TYPE_RISCV_VUL_MODEL_MACHINE)
 
-typedef enum RISCVVirtAIAType {
-    VIRT_AIA_TYPE_NONE = 0,
-    VIRT_AIA_TYPE_APLIC,
-    VIRT_AIA_TYPE_APLIC_IMSIC,
-} RISCVVirtAIAType;
+typedef enum RISCVVulModelAIAType {
+    VUL_MODEL_AIA_TYPE_NONE = 0,
+    VUL_MODEL_AIA_TYPE_APLIC,
+    VUL_MODEL_AIA_TYPE_APLIC_IMSIC,
+} RISCVVulModelAIAType;
 
-struct RISCVVirtState {
+struct RISCVVulModelState {
     /*< private >*/
     MachineState parent;
 
     /*< public >*/
     Notifier machine_done;
     DeviceState *platform_bus_dev;
-    RISCVHartArrayState soc[VIRT_SOCKETS_MAX];
-    DeviceState *irqchip[VIRT_SOCKETS_MAX];
+    RISCVHartArrayState soc[VUL_MODEL_SOCKETS_MAX];
+    DeviceState *irqchip[VUL_MODEL_SOCKETS_MAX];
     PFlashCFI01 *flash[2];
     FWCfgState *fw_cfg;
 
     int fdt_size;
     bool have_aclint;
-    RISCVVirtAIAType aia_type;
+    RISCVVulModelAIAType aia_type;
     int aia_guests;
     char *oem_id;
     char *oem_table_id;
@@ -63,26 +63,26 @@ struct RISCVVirtState {
 };
 
 enum {
-    VIRT_DEBUG,
-    VIRT_MROM,
-    VIRT_TEST,
-    VIRT_RTC,
-    VIRT_CLINT,
-    VIRT_ACLINT_SSWI,
-    VIRT_PLIC,
-    VIRT_APLIC_M,
-    VIRT_APLIC_S,
-    VIRT_UART0,
-    VIRT_VIRTIO,
-    VIRT_FW_CFG,
-    VIRT_IMSIC_M,
-    VIRT_IMSIC_S,
-    VIRT_FLASH,
-    VIRT_DRAM,
-    VIRT_PCIE_MMIO,
-    VIRT_PCIE_PIO,
-    VIRT_PLATFORM_BUS,
-    VIRT_PCIE_ECAM
+    VUL_MODEL_DEBUG,
+    VUL_MODEL_MROM,
+    VUL_MODEL_TEST,
+    VUL_MODEL_RTC,
+    VUL_MODEL_CLINT,
+    VUL_MODEL_ACLINT_SSWI,
+    VUL_MODEL_PLIC,
+    VUL_MODEL_APLIC_M,
+    VUL_MODEL_APLIC_S,
+    VUL_MODEL_UART0,
+    VUL_MODEL_VIRTIO,
+    VUL_MODEL_FW_CFG,
+    VUL_MODEL_IMSIC_M,
+    VUL_MODEL_IMSIC_S,
+    VUL_MODEL_FLASH,
+    VUL_MODEL_DRAM,
+    VUL_MODEL_PCIE_MMIO,
+    VUL_MODEL_PCIE_PIO,
+    VUL_MODEL_PLATFORM_BUS,
+    VUL_MODEL_PCIE_ECAM
 };
 
 enum {
@@ -94,22 +94,22 @@ enum {
     VIRT_PLATFORM_BUS_IRQ = 64, /* 64 to 95 */
 };
 
-#define VIRT_PLATFORM_BUS_NUM_IRQS 32
+#define VUL_MODEL_PLATFORM_BUS_NUM_IRQS 32
 
-#define VIRT_IRQCHIP_NUM_MSIS 255
-#define VIRT_IRQCHIP_NUM_SOURCES 96
-#define VIRT_IRQCHIP_NUM_PRIO_BITS 3
-#define VIRT_IRQCHIP_MAX_GUESTS_BITS 3
-#define VIRT_IRQCHIP_MAX_GUESTS ((1U << VIRT_IRQCHIP_MAX_GUESTS_BITS) - 1U)
+#define VUL_MODEL_IRQCHIP_NUM_MSIS 255
+#define VUL_MODEL_IRQCHIP_NUM_SOURCES 96
+#define VUL_MODEL_IRQCHIP_NUM_PRIO_BITS 3
+#define VUL_MODEL_IRQCHIP_MAX_GUESTS_BITS 3
+#define VUL_MODEL_IRQCHIP_MAX_GUESTS ((1U << VUL_MODEL_IRQCHIP_MAX_GUESTS_BITS) - 1U)
 
-#define VIRT_PLIC_PRIORITY_BASE 0x00
-#define VIRT_PLIC_PENDING_BASE 0x1000
-#define VIRT_PLIC_ENABLE_BASE 0x2000
-#define VIRT_PLIC_ENABLE_STRIDE 0x80
-#define VIRT_PLIC_CONTEXT_BASE 0x200000
-#define VIRT_PLIC_CONTEXT_STRIDE 0x1000
-#define VIRT_PLIC_SIZE(__num_context) \
-    (VIRT_PLIC_CONTEXT_BASE + (__num_context) * VIRT_PLIC_CONTEXT_STRIDE)
+#define VUL_MODEL_PLIC_PRIORITY_BASE 0x00
+#define VUL_MODEL_PLIC_PENDING_BASE 0x1000
+#define VUL_MODEL_PLIC_ENABLE_BASE 0x2000
+#define VUL_MODEL_PLIC_ENABLE_STRIDE 0x80
+#define VUL_MODEL_PLIC_CONTEXT_BASE 0x200000
+#define VUL_MODEL_PLIC_CONTEXT_STRIDE 0x1000
+#define VUL_MODEL_PLIC_SIZE(__num_context) \
+    (VUL_MODEL_PLIC_CONTEXT_BASE + (__num_context) * VUL_MODEL_PLIC_CONTEXT_STRIDE)
 
 #define FDT_PCI_ADDR_CELLS    3
 #define FDT_PCI_INT_CELLS     1
@@ -125,6 +125,6 @@ enum {
 #define FDT_APLIC_INT_MAP_WIDTH (FDT_PCI_ADDR_CELLS + FDT_PCI_INT_CELLS + \
                                  1 + FDT_APLIC_INT_CELLS)
 
-bool virt_is_acpi_enabled(RISCVVirtState *s);
-void virt_acpi_setup(RISCVVirtState *vms);
-#endif
+bool vul_model_is_acpi_enabled(RISCVVulModelState *s);
+void virt_acpi_setup(RISCVVulModelState *vms);
+#endif // HW_RISCV_VUL_MODEL_H
