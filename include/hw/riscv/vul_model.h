@@ -86,18 +86,19 @@ enum {
 };
 
 enum {
-    UART0_IRQ = 10,
+    UART0_IRQ = 8,
+    /* Anything from here below makes no sense and needs fixing/removal */
     RTC_IRQ = 11,
-    VIRTIO_IRQ = 1, /* 1 to 8 */
-    VIRTIO_COUNT = 8,
+    VIRTIO_IRQ = 1, /* 1 to 7 */
+    VIRTIO_COUNT = 7,
     PCIE_IRQ = 0x20, /* 32 to 35 */
     VIRT_PLATFORM_BUS_IRQ = 64, /* 64 to 95 */
 };
 
-#define VUL_MODEL_PLATFORM_BUS_NUM_IRQS 32
+#define VUL_MODEL_PLATFORM_BUS_NUM_IRQS 6
 
-#define VUL_MODEL_IRQCHIP_NUM_MSIS 255
-#define VUL_MODEL_IRQCHIP_NUM_SOURCES 96
+#define VUL_MODEL_IRQCHIP_NUM_MSIS 511
+#define VUL_MODEL_IRQCHIP_NUM_SOURCES 70
 #define VUL_MODEL_IRQCHIP_NUM_PRIO_BITS 3
 #define VUL_MODEL_IRQCHIP_MAX_GUESTS_BITS 3
 #define VUL_MODEL_IRQCHIP_MAX_GUESTS ((1U << VUL_MODEL_IRQCHIP_MAX_GUESTS_BITS) - 1U)

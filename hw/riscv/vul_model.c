@@ -70,11 +70,7 @@
 #error "Can't accommodate single IMSIC group in address space"
 #endif
 
-#define VUL_MODEL_IMSIC_MAX_SIZE            (VUL_MODEL_SOCKETS_MAX * \
-                                        VUL_MODEL_IMSIC_GROUP_MAX_SIZE)
-#if 0x4000000 < VUL_MODEL_IMSIC_MAX_SIZE
-#error "Can't accommodate all IMSIC groups in address space"
-#endif
+#define VUL_MODEL_RISCV_ACLINT_DEFAULT_TIMEBASE_FREQ (10833333)
 
 /* KVM AIA only supports APLIC MSI. APLIC Wired is always emulated by QEMU. */
 static bool vul_model_use_kvm_aia(RISCVVulModelState *s)
@@ -82,27 +78,37 @@ static bool vul_model_use_kvm_aia(RISCVVulModelState *s)
     return kvm_irqchip_in_kernel() && s->aia_type == VUL_MODEL_AIA_TYPE_APLIC_IMSIC;
 }
 
+#define VUL_MODEL_FLASH_SECTOR_SIZE (64 * KiB)
+#define VUL_MODEL_UART0_REG_SHIFT 2
+
 static const MemMapEntry vul_model_memmap[] = {
-    [VUL_MODEL_DEBUG] =        {        0x0,         0x100 },
-    [VUL_MODEL_MROM] =         {     0x1000,        0xf000 },
-    [VUL_MODEL_TEST] =         {   0x100000,        0x1000 },
-    [VUL_MODEL_RTC] =          {   0x101000,        0x1000 },
-    [VUL_MODEL_CLINT] =        {  0x2000000,       0x10000 },
-    [VUL_MODEL_ACLINT_SSWI] =  {  0x2F00000,        0x4000 },
-    [VUL_MODEL_PCIE_PIO] =     {  0x3000000,       0x10000 },
-    [VUL_MODEL_PLATFORM_BUS] = {  0x4000000,     0x2000000 },
-    [VUL_MODEL_PLIC] =         {  0xc000000, VUL_MODEL_PLIC_SIZE(VUL_MODEL_CPUS_MAX * 2) },
-    [VUL_MODEL_APLIC_M] =      {  0xc000000, APLIC_SIZE(VUL_MODEL_CPUS_MAX) },
-    [VUL_MODEL_APLIC_S] =      {  0xd000000, APLIC_SIZE(VUL_MODEL_CPUS_MAX) },
-    [VUL_MODEL_UART0] =        { 0x10000000,         0x100 },
-    [VUL_MODEL_VIRTIO] =       { 0x10001000,        0x1000 },
-    [VUL_MODEL_FW_CFG] =       { 0x10100000,          0x18 },
-    [VUL_MODEL_FLASH] =        { 0x20000000,     0x4000000 },
-    [VUL_MODEL_IMSIC_M] =      { 0x24000000, VUL_MODEL_IMSIC_MAX_SIZE },
-    [VUL_MODEL_IMSIC_S] =      { 0x28000000, VUL_MODEL_IMSIC_MAX_SIZE },
-    [VUL_MODEL_PCIE_ECAM] =    { 0x30000000,    0x10000000 },
-    [VUL_MODEL_PCIE_MMIO] =    { 0x40000000,    0x40000000 },
-    [VUL_MODEL_DRAM] =         { 0x80000000,           0x0 },
+    /* Stuff we actually care about in the model */
+    [VUL_MODEL_MROM] =         {     0x1000,       0xf000 }, /* not really in our model, but QEMU wants it for booting */
+    [VUL_MODEL_UART0] =        {    0xf0000,        0x100 },
+    [VUL_MODEL_PLIC] =         { 0x78600000,       0x8000 }, /* not relevant */
+    [VUL_MODEL_APLIC_M] =      { 0x78604000,       0x4000 },
+    [VUL_MODEL_APLIC_S] =      { 0x78608000,       0x4000 },
+    [VUL_MODEL_IMSIC_M] =      { 0x78900000,       0x4000 },
+    [VUL_MODEL_IMSIC_S] =      { 0x78a00000,      0x20000 },
+    [VUL_MODEL_CLINT] =        { 0x7c000000,      0x10000 },
+    [VUL_MODEL_DEBUG] =        { 0x7e000000,       0x1000 },
+    [VUL_MODEL_TEST] =         { 0x7e004000,       0x1000 },
+    [VUL_MODEL_DRAM] =         { 0x80000000,    0x2000000 },
+    /* There are things we don't care about that are present in the virt model, on which this board is based upon,
+     * and aren't meaningfully mentioned in the HAPS DTS.
+     * Ideally we'd remove anything we don't use, however for some of the entries that requires additional work to make
+     * sure the rest of the model works and doesn't present a tangible benefit for our current use case.
+     * As such, we move these things outside of any memory range we may use. Currently, a good place where to move all
+     * of this stuff is the address region from which LLC should be accessed in SRAM mode. */
+    [VUL_MODEL_FLASH] =        { 0x200000000,     2 * VUL_MODEL_FLASH_SECTOR_SIZE },
+    [VUL_MODEL_RTC] =          { 0x200020000,        0x10000 },
+    [VUL_MODEL_ACLINT_SSWI] =  { 0x200021000,        0x1000 },
+    [VUL_MODEL_PCIE_PIO] =     { 0x200022000,       0x1000 },
+    [VUL_MODEL_PLATFORM_BUS] = { 0x200023000,     0x1000 },
+    [VUL_MODEL_VIRTIO] =       { 0x200024000,        0x1000 },
+    [VUL_MODEL_FW_CFG] =       { 0x200025000,          0x18 },
+    [VUL_MODEL_PCIE_ECAM] =    { 0x200026000,    0x1000 },
+    [VUL_MODEL_PCIE_MMIO] =    { 0x200027000,    0x1000 },
 };
 
 /* PCIe high mmio is fixed for RV32 */
@@ -113,8 +119,6 @@ static const MemMapEntry vul_model_memmap[] = {
 #define VIRT64_HIGH_PCIE_MMIO_SIZE  (16 * GiB)
 
 static MemMapEntry vul_model_high_pcie_memmap;
-
-#define VUL_MODEL_FLASH_SECTOR_SIZE (256 * KiB)
 
 static PFlashCFI01 *vul_model_flash_create1(RISCVVulModelState *s,
                                        const char *name,
@@ -545,8 +549,7 @@ static void create_fdt_one_imsic(RISCVVulModelState *s, hwaddr base_addr,
     imsic_max_hart_per_socket = 0;
     for (socket = 0; socket < socket_count; socket++) {
         imsic_addr = base_addr + socket * VUL_MODEL_IMSIC_GROUP_MAX_SIZE;
-        imsic_size = IMSIC_HART_SIZE(imsic_guest_bits) *
-                     s->soc[socket].num_harts;
+        imsic_size = m_mode ? vul_model_memmap[VUL_MODEL_IMSIC_M].size : vul_model_memmap[VUL_MODEL_IMSIC_S].size;
         imsic_regs[socket * 4 + 0] = 0;
         imsic_regs[socket * 4 + 1] = cpu_to_be32(imsic_addr);
         imsic_regs[socket * 4 + 2] = 0;
@@ -743,7 +746,7 @@ static void create_fdt_sockets(RISCVVulModelState *s, const MemMapEntry *memmap,
 
     qemu_fdt_add_subnode(ms->fdt, "/cpus");
     qemu_fdt_setprop_cell(ms->fdt, "/cpus", "timebase-frequency",
-                          RISCV_ACLINT_DEFAULT_TIMEBASE_FREQ);
+                          VUL_MODEL_RISCV_ACLINT_DEFAULT_TIMEBASE_FREQ);
     qemu_fdt_setprop_cell(ms->fdt, "/cpus", "#size-cells", 0x0);
     qemu_fdt_setprop_cell(ms->fdt, "/cpus", "#address-cells", 0x1);
     qemu_fdt_add_subnode(ms->fdt, "/cpus/cpu-map");
@@ -954,7 +957,8 @@ static void create_fdt_uart(RISCVVulModelState *s, const MemMapEntry *memmap,
     qemu_fdt_setprop_cells(ms->fdt, name, "reg",
         0x0, memmap[VUL_MODEL_UART0].base,
         0x0, memmap[VUL_MODEL_UART0].size);
-    qemu_fdt_setprop_cell(ms->fdt, name, "clock-frequency", 3686400);
+    qemu_fdt_setprop_cell(ms->fdt, name, "reg-shift", VUL_MODEL_UART0_REG_SHIFT);
+    qemu_fdt_setprop_cell(ms->fdt, name, "clock-frequency", 1562500);
     qemu_fdt_setprop_cell(ms->fdt, name, "interrupt-parent", irq_mmio_phandle);
     if (s->aia_type == VUL_MODEL_AIA_TYPE_NONE) {
         qemu_fdt_setprop_cell(ms->fdt, name, "interrupts", UART0_IRQ);
@@ -1208,6 +1212,12 @@ static DeviceState *vul_model_create_aia(RISCVVulModelAIAType aia_type, int aia_
                                      VUL_MODEL_IRQCHIP_NUM_SOURCES,
                                      VUL_MODEL_IRQCHIP_NUM_PRIO_BITS,
                                      msimode, true, NULL);
+        RISCVAPLICState *aplic = RISCV_APLIC(aplic_m);
+
+        /* This info is hardcoded in the RTL design and Zephyr expects so as well. There is no clean API to set this
+         * info, so we go through this wonderful backdoor */
+        memory_region_dispatch_write(&aplic->mmio, 0x1bc0, 0x00900000, MO_UL, MEMTXATTRS_UNSPECIFIED);
+        memory_region_dispatch_write(&aplic->mmio, 0x1bc4, 0x80000000, MO_UL, MEMTXATTRS_UNSPECIFIED);
     }
 
     /* Per-socket S-level APLIC */
@@ -1328,18 +1338,7 @@ static void vul_model_machine_done(Notifier *notifier, void *data)
                               vul_model_memmap[VUL_MODEL_MROM].size, kernel_entry,
                               fdt_load_addr);
 
-    /*
-     * Only direct boot kernel is currently supported for KVM VM,
-     * So here setup kernel start address and fdt address.
-     * TODO:Support firmware loading and integrate to TCG start
-     */
-    if (kvm_enabled()) {
-        riscv_setup_direct_kernel(kernel_entry, fdt_load_addr);
-    }
-
-    if (vul_model_is_acpi_enabled(s)) {
-        virt_acpi_setup(s);
-    }
+    riscv_setup_direct_kernel(kernel_entry, fdt_load_addr);
 }
 
 static void vul_model_machine_init(MachineState *machine)
@@ -1352,6 +1351,9 @@ static void vul_model_machine_init(MachineState *machine)
     DeviceState *mmio_irqchip, *virtio_irqchip, *pcie_irqchip;
     int i, base_hartid, hart_count;
     int socket_count = riscv_socket_count(machine);
+
+    s->have_aclint = false;
+    s->aia_type = VUL_MODEL_AIA_TYPE_APLIC_IMSIC;
 
     /* Check socket count limit */
     if (VUL_MODEL_SOCKETS_MAX < socket_count) {
@@ -1405,9 +1407,10 @@ static void vul_model_machine_init(MachineState *machine)
                             i * RISCV_ACLINT_DEFAULT_MTIMER_SIZE,
                         RISCV_ACLINT_DEFAULT_MTIMER_SIZE,
                         base_hartid, hart_count,
-                        RISCV_ACLINT_DEFAULT_MTIMECMP,
-                        RISCV_ACLINT_DEFAULT_MTIME,
-                        RISCV_ACLINT_DEFAULT_TIMEBASE_FREQ, true);
+                        0x4000,
+                        0xbff8,
+                       VUL_MODEL_RISCV_ACLINT_DEFAULT_TIMEBASE_FREQ,
+                       false /*as per sifive doc, it's memory mapped and rdtime generates illegal int exception*/);
                 } else {
                     /* Per-socket ACLINT MSWI, MTIMER, and SSWI */
                     riscv_aclint_swi_create(memmap[VUL_MODEL_CLINT].base +
@@ -1420,7 +1423,7 @@ static void vul_model_machine_init(MachineState *machine)
                         base_hartid, hart_count,
                         RISCV_ACLINT_DEFAULT_MTIMECMP,
                         RISCV_ACLINT_DEFAULT_MTIME,
-                        RISCV_ACLINT_DEFAULT_TIMEBASE_FREQ, true);
+                       VUL_MODEL_RISCV_ACLINT_DEFAULT_TIMEBASE_FREQ, false);
                     riscv_aclint_swi_create(memmap[VUL_MODEL_ACLINT_SSWI].base +
                             i * memmap[VUL_MODEL_ACLINT_SSWI].size,
                         base_hartid, hart_count, true);
@@ -1434,7 +1437,7 @@ static void vul_model_machine_init(MachineState *machine)
                         i * memmap[VUL_MODEL_CLINT].size + RISCV_ACLINT_SWI_SIZE,
                     RISCV_ACLINT_DEFAULT_MTIMER_SIZE, base_hartid, hart_count,
                     RISCV_ACLINT_DEFAULT_MTIMECMP, RISCV_ACLINT_DEFAULT_MTIME,
-                    RISCV_ACLINT_DEFAULT_TIMEBASE_FREQ, true);
+                                           VUL_MODEL_RISCV_ACLINT_DEFAULT_TIMEBASE_FREQ, false);
             }
         }
 
@@ -1470,6 +1473,10 @@ static void vul_model_machine_init(MachineState *machine)
                              memmap[VUL_MODEL_IMSIC_S].base,
                              s->aia_guests);
     }
+
+    /* Check that the amount of RAM the user asked is the one we expect (otherwise our memory map may not make much
+     * sense) */
+    assert(machine->ram_size <= memmap[VUL_MODEL_DRAM].size);
 
     if (riscv_is_32bit(&s->soc[0])) {
 #if HOST_LONG_BITS == 64
@@ -1530,8 +1537,8 @@ static void vul_model_machine_init(MachineState *machine)
     create_platform_bus(s, mmio_irqchip);
 
     serial_mm_init(system_memory, memmap[VUL_MODEL_UART0].base,
-        0, qdev_get_gpio_in(mmio_irqchip, UART0_IRQ), 399193,
-        serial_hd(0), DEVICE_LITTLE_ENDIAN);
+                   VUL_MODEL_UART0_REG_SHIFT, qdev_get_gpio_in(mmio_irqchip, UART0_IRQ), 399193,
+                   serial_hd(0), DEVICE_LITTLE_ENDIAN);
 
     sysbus_create_simple("goldfish_rtc", memmap[VUL_MODEL_RTC].base,
         qdev_get_gpio_in(mmio_irqchip, RTC_IRQ));
@@ -1695,7 +1702,7 @@ static void vul_model_machine_class_init(ObjectClass *oc, void *data)
     MachineClass *mc = MACHINE_CLASS(oc);
     HotplugHandlerClass *hc = HOTPLUG_HANDLER_CLASS(oc);
 
-    mc->desc = "RISC-V VirtIO board";
+    mc->desc = "RISC-V Vulcano simulation board";
     mc->init = vul_model_machine_init;
     mc->max_cpus = VUL_MODEL_CPUS_MAX;
     mc->default_cpu_type = TYPE_RISCV_CPU_BASE;
