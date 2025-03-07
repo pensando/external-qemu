@@ -216,9 +216,7 @@ static void create_pcie_irq_map(RISCVVulModelState *s, void *fdt, char *nodename
             /* Fill interrupt controller phandle and cells */
             irq_map[i++] = cpu_to_be32(irqchip_phandle);
             irq_map[i++] = cpu_to_be32(irq_nr);
-            if (s->aia_type != VUL_MODEL_AIA_TYPE_NONE) {
-                irq_map[i++] = cpu_to_be32(0x4);
-            }
+            irq_map[i++] = cpu_to_be32(0x4);
 
             if (!irq_map_stride) {
                 irq_map_stride = i;
@@ -389,31 +387,9 @@ static void create_fdt_socket_aclint(RISCVVulModelState *s,
     }
     aclint_cells_size = s->soc[socket].num_harts * sizeof(uint32_t) * 2;
 
-    if (s->aia_type != VUL_MODEL_AIA_TYPE_APLIC_IMSIC) {
-        addr = memmap[VUL_MODEL_CLINT].base + (memmap[VUL_MODEL_CLINT].size * socket);
-        name = g_strdup_printf("/soc/mswi@%lx", addr);
-        qemu_fdt_add_subnode(ms->fdt, name);
-        qemu_fdt_setprop_string(ms->fdt, name, "compatible",
-            "riscv,aclint-mswi");
-        qemu_fdt_setprop_cells(ms->fdt, name, "reg",
-            0x0, addr, 0x0, RISCV_ACLINT_SWI_SIZE);
-        qemu_fdt_setprop(ms->fdt, name, "interrupts-extended",
-            aclint_mswi_cells, aclint_cells_size);
-        qemu_fdt_setprop(ms->fdt, name, "interrupt-controller", NULL, 0);
-        qemu_fdt_setprop_cell(ms->fdt, name, "#interrupt-cells", 0);
-        riscv_socket_fdt_write_id(ms, name, socket);
-        g_free(name);
-    }
-
-    if (s->aia_type == VUL_MODEL_AIA_TYPE_APLIC_IMSIC) {
-        addr = memmap[VUL_MODEL_CLINT].base +
-               (RISCV_ACLINT_DEFAULT_MTIMER_SIZE * socket);
-        size = RISCV_ACLINT_DEFAULT_MTIMER_SIZE;
-    } else {
-        addr = memmap[VUL_MODEL_CLINT].base + RISCV_ACLINT_SWI_SIZE +
-            (memmap[VUL_MODEL_CLINT].size * socket);
-        size = memmap[VUL_MODEL_CLINT].size - RISCV_ACLINT_SWI_SIZE;
-    }
+    addr = memmap[VUL_MODEL_CLINT].base +
+           (RISCV_ACLINT_DEFAULT_MTIMER_SIZE * socket);
+    size = RISCV_ACLINT_DEFAULT_MTIMER_SIZE;
     name = g_strdup_printf("/soc/mtimer@%lx", addr);
     qemu_fdt_add_subnode(ms->fdt, name);
     qemu_fdt_setprop_string(ms->fdt, name, "compatible",
@@ -428,92 +404,9 @@ static void create_fdt_socket_aclint(RISCVVulModelState *s,
     riscv_socket_fdt_write_id(ms, name, socket);
     g_free(name);
 
-    if (s->aia_type != VUL_MODEL_AIA_TYPE_APLIC_IMSIC) {
-        addr = memmap[VUL_MODEL_ACLINT_SSWI].base +
-            (memmap[VUL_MODEL_ACLINT_SSWI].size * socket);
-        name = g_strdup_printf("/soc/sswi@%lx", addr);
-        qemu_fdt_add_subnode(ms->fdt, name);
-        qemu_fdt_setprop_string(ms->fdt, name, "compatible",
-            "riscv,aclint-sswi");
-        qemu_fdt_setprop_cells(ms->fdt, name, "reg",
-            0x0, addr, 0x0, memmap[VUL_MODEL_ACLINT_SSWI].size);
-        qemu_fdt_setprop(ms->fdt, name, "interrupts-extended",
-            aclint_sswi_cells, aclint_cells_size);
-        qemu_fdt_setprop(ms->fdt, name, "interrupt-controller", NULL, 0);
-        qemu_fdt_setprop_cell(ms->fdt, name, "#interrupt-cells", 0);
-        riscv_socket_fdt_write_id(ms, name, socket);
-        g_free(name);
-    }
-
     g_free(aclint_mswi_cells);
     g_free(aclint_mtimer_cells);
     g_free(aclint_sswi_cells);
-}
-
-static void create_fdt_socket_plic(RISCVVulModelState *s,
-                                   const MemMapEntry *memmap, int socket,
-                                   uint32_t *phandle, uint32_t *intc_phandles,
-                                   uint32_t *plic_phandles)
-{
-    int cpu;
-    char *plic_name;
-    uint32_t *plic_cells;
-    unsigned long plic_addr;
-    MachineState *ms = MACHINE(s);
-    static const char * const plic_compat[2] = {
-        "sifive,plic-1.0.0", "riscv,plic0"
-    };
-
-    if (kvm_enabled()) {
-        plic_cells = g_new0(uint32_t, s->soc[socket].num_harts * 2);
-    } else {
-        plic_cells = g_new0(uint32_t, s->soc[socket].num_harts * 4);
-    }
-
-    for (cpu = 0; cpu < s->soc[socket].num_harts; cpu++) {
-        if (kvm_enabled()) {
-            plic_cells[cpu * 2 + 0] = cpu_to_be32(intc_phandles[cpu]);
-            plic_cells[cpu * 2 + 1] = cpu_to_be32(IRQ_S_EXT);
-        } else {
-            plic_cells[cpu * 4 + 0] = cpu_to_be32(intc_phandles[cpu]);
-            plic_cells[cpu * 4 + 1] = cpu_to_be32(IRQ_M_EXT);
-            plic_cells[cpu * 4 + 2] = cpu_to_be32(intc_phandles[cpu]);
-            plic_cells[cpu * 4 + 3] = cpu_to_be32(IRQ_S_EXT);
-        }
-    }
-
-    plic_phandles[socket] = (*phandle)++;
-    plic_addr = memmap[VUL_MODEL_PLIC].base + (memmap[VUL_MODEL_PLIC].size * socket);
-    plic_name = g_strdup_printf("/soc/plic@%lx", plic_addr);
-    qemu_fdt_add_subnode(ms->fdt, plic_name);
-    qemu_fdt_setprop_cell(ms->fdt, plic_name,
-        "#interrupt-cells", FDT_PLIC_INT_CELLS);
-    qemu_fdt_setprop_cell(ms->fdt, plic_name,
-        "#address-cells", FDT_PLIC_ADDR_CELLS);
-    qemu_fdt_setprop_string_array(ms->fdt, plic_name, "compatible",
-                                  (char **)&plic_compat,
-                                  ARRAY_SIZE(plic_compat));
-    qemu_fdt_setprop(ms->fdt, plic_name, "interrupt-controller", NULL, 0);
-    qemu_fdt_setprop(ms->fdt, plic_name, "interrupts-extended",
-        plic_cells, s->soc[socket].num_harts * sizeof(uint32_t) * 4);
-    qemu_fdt_setprop_cells(ms->fdt, plic_name, "reg",
-        0x0, plic_addr, 0x0, memmap[VUL_MODEL_PLIC].size);
-    qemu_fdt_setprop_cell(ms->fdt, plic_name, "riscv,ndev",
-                          VUL_MODEL_IRQCHIP_NUM_SOURCES - 1);
-    riscv_socket_fdt_write_id(ms, plic_name, socket);
-    qemu_fdt_setprop_cell(ms->fdt, plic_name, "phandle",
-        plic_phandles[socket]);
-
-    if (!socket) {
-        platform_bus_add_all_fdt_nodes(ms->fdt, plic_name,
-                                       memmap[VUL_MODEL_PLATFORM_BUS].base,
-                                       memmap[VUL_MODEL_PLATFORM_BUS].size,
-                                       VIRT_PLATFORM_BUS_IRQ);
-    }
-
-    g_free(plic_name);
-
-    g_free(plic_cells);
 }
 
 static uint32_t imsic_num_bits(uint32_t count)
@@ -640,12 +533,7 @@ static void create_fdt_one_aplic(RISCVVulModelState *s, int socket,
                           "#interrupt-cells", FDT_APLIC_INT_CELLS);
     qemu_fdt_setprop(ms->fdt, aplic_name, "interrupt-controller", NULL, 0);
 
-    if (s->aia_type == VUL_MODEL_AIA_TYPE_APLIC) {
-        qemu_fdt_setprop(ms->fdt, aplic_name, "interrupts-extended",
-                         aplic_cells, num_harts * sizeof(uint32_t) * 2);
-    } else {
-        qemu_fdt_setprop_cell(ms->fdt, aplic_name, "msi-parent", msi_phandle);
-    }
+    qemu_fdt_setprop_cell(ms->fdt, aplic_name, "msi-parent", msi_phandle);
 
     qemu_fdt_setprop_cells(ms->fdt, aplic_name, "reg",
                            0x0, aplic_addr, 0x0, aplic_size);
@@ -778,11 +666,9 @@ static void create_fdt_sockets(RISCVVulModelState *s, const MemMapEntry *memmap,
         }
     }
 
-    if (s->aia_type == VUL_MODEL_AIA_TYPE_APLIC_IMSIC) {
-        create_fdt_imsic(s, memmap, phandle, intc_phandles,
-            &msi_m_phandle, &msi_s_phandle);
-        *msi_pcie_phandle = msi_s_phandle;
-    }
+    create_fdt_imsic(s, memmap, phandle, intc_phandles,
+        &msi_m_phandle, &msi_s_phandle);
+    *msi_pcie_phandle = msi_s_phandle;
 
     /* KVM AIA only has one APLIC instance */
     if (kvm_enabled() && vul_model_use_kvm_aia(s)) {
@@ -795,17 +681,11 @@ static void create_fdt_sockets(RISCVVulModelState *s, const MemMapEntry *memmap,
         for (socket = (socket_count - 1); socket >= 0; socket--) {
             phandle_pos -= s->soc[socket].num_harts;
 
-            if (s->aia_type == VUL_MODEL_AIA_TYPE_NONE) {
-                create_fdt_socket_plic(s, memmap, socket, phandle,
-                                       &intc_phandles[phandle_pos],
-                                       xplic_phandles);
-            } else {
-                create_fdt_socket_aplic(s, memmap, socket,
-                                        msi_m_phandle, msi_s_phandle, phandle,
-                                        &intc_phandles[phandle_pos],
-                                        xplic_phandles,
-                                        s->soc[socket].num_harts);
-            }
+            create_fdt_socket_aplic(s, memmap, socket,
+                                    msi_m_phandle, msi_s_phandle, phandle,
+                                    &intc_phandles[phandle_pos],
+                                    xplic_phandles,
+                                    s->soc[socket].num_harts);
         }
     }
 
@@ -852,13 +732,8 @@ static void create_fdt_virtio(RISCVVulModelState *s, const MemMapEntry *memmap,
             0x0, memmap[VUL_MODEL_VIRTIO].size);
         qemu_fdt_setprop_cell(ms->fdt, name, "interrupt-parent",
             irq_virtio_phandle);
-        if (s->aia_type == VUL_MODEL_AIA_TYPE_NONE) {
-            qemu_fdt_setprop_cell(ms->fdt, name, "interrupts",
-                                  VIRTIO_IRQ + i);
-        } else {
-            qemu_fdt_setprop_cells(ms->fdt, name, "interrupts",
-                                   VIRTIO_IRQ + i, 0x4);
-        }
+        qemu_fdt_setprop_cells(ms->fdt, name, "interrupts",
+                               VIRTIO_IRQ + i, 0x4);
         g_free(name);
     }
 }
@@ -885,9 +760,7 @@ static void create_fdt_pcie(RISCVVulModelState *s, const MemMapEntry *memmap,
     qemu_fdt_setprop_cells(ms->fdt, name, "bus-range", 0,
         memmap[VUL_MODEL_PCIE_ECAM].size / PCIE_MMCFG_SIZE_MIN - 1);
     qemu_fdt_setprop(ms->fdt, name, "dma-coherent", NULL, 0);
-    if (s->aia_type == VUL_MODEL_AIA_TYPE_APLIC_IMSIC) {
-        qemu_fdt_setprop_cell(ms->fdt, name, "msi-parent", msi_pcie_phandle);
-    }
+    qemu_fdt_setprop_cell(ms->fdt, name, "msi-parent", msi_pcie_phandle);
     qemu_fdt_setprop_cells(ms->fdt, name, "reg", 0,
         memmap[VUL_MODEL_PCIE_ECAM].base, 0, memmap[VUL_MODEL_PCIE_ECAM].size);
     qemu_fdt_setprop_sized_cells(ms->fdt, name, "ranges",
@@ -960,11 +833,7 @@ static void create_fdt_uart(RISCVVulModelState *s, const MemMapEntry *memmap,
     qemu_fdt_setprop_cell(ms->fdt, name, "reg-shift", VUL_MODEL_UART0_REG_SHIFT);
     qemu_fdt_setprop_cell(ms->fdt, name, "clock-frequency", 1562500);
     qemu_fdt_setprop_cell(ms->fdt, name, "interrupt-parent", irq_mmio_phandle);
-    if (s->aia_type == VUL_MODEL_AIA_TYPE_NONE) {
-        qemu_fdt_setprop_cell(ms->fdt, name, "interrupts", UART0_IRQ);
-    } else {
-        qemu_fdt_setprop_cells(ms->fdt, name, "interrupts", UART0_IRQ, 0x4);
-    }
+    qemu_fdt_setprop_cells(ms->fdt, name, "interrupts", UART0_IRQ, 0x4);
 
     qemu_fdt_setprop_string(ms->fdt, "/chosen", "stdout-path", name);
     g_free(name);
@@ -984,11 +853,7 @@ static void create_fdt_rtc(RISCVVulModelState *s, const MemMapEntry *memmap,
         0x0, memmap[VUL_MODEL_RTC].base, 0x0, memmap[VUL_MODEL_RTC].size);
     qemu_fdt_setprop_cell(ms->fdt, name, "interrupt-parent",
         irq_mmio_phandle);
-    if (s->aia_type == VUL_MODEL_AIA_TYPE_NONE) {
-        qemu_fdt_setprop_cell(ms->fdt, name, "interrupts", RTC_IRQ);
-    } else {
-        qemu_fdt_setprop_cells(ms->fdt, name, "interrupts", RTC_IRQ, 0x4);
-    }
+    qemu_fdt_setprop_cells(ms->fdt, name, "interrupts", RTC_IRQ, 0x4);
     g_free(name);
 }
 
@@ -1139,34 +1004,6 @@ static FWCfgState *create_fw_cfg(const MachineState *ms)
     fw_cfg_add_i16(fw_cfg, FW_CFG_NB_CPUS, (uint16_t)ms->smp.cpus);
 
     return fw_cfg;
-}
-
-static DeviceState *vul_model_create_plic(const MemMapEntry *memmap, int socket,
-                                     int base_hartid, int hart_count)
-{
-    DeviceState *ret;
-    char *plic_hart_config;
-
-    /* Per-socket PLIC hart topology configuration string */
-    plic_hart_config = riscv_plic_hart_config_string(hart_count);
-
-    /* Per-socket PLIC */
-    ret = sifive_plic_create(
-            memmap[VUL_MODEL_PLIC].base + socket * memmap[VUL_MODEL_PLIC].size,
-            plic_hart_config, hart_count, base_hartid,
-            VUL_MODEL_IRQCHIP_NUM_SOURCES,
-            ((1U << VUL_MODEL_IRQCHIP_NUM_PRIO_BITS) - 1),
-            VUL_MODEL_PLIC_PRIORITY_BASE,
-            VUL_MODEL_PLIC_PENDING_BASE,
-            VUL_MODEL_PLIC_ENABLE_BASE,
-            VUL_MODEL_PLIC_ENABLE_STRIDE,
-            VUL_MODEL_PLIC_CONTEXT_BASE,
-            VUL_MODEL_PLIC_CONTEXT_STRIDE,
-            memmap[VUL_MODEL_PLIC].size);
-
-    g_free(plic_hart_config);
-
-    return ret;
 }
 
 static DeviceState *vul_model_create_aia(RISCVVulModelAIAType aia_type, int aia_guests,
@@ -1400,56 +1237,20 @@ static void vul_model_machine_init(MachineState *machine)
         sysbus_realize(SYS_BUS_DEVICE(&s->soc[i]), &error_fatal);
 
         if (tcg_enabled()) {
-            if (s->have_aclint) {
-                if (s->aia_type == VUL_MODEL_AIA_TYPE_APLIC_IMSIC) {
-                    /* Per-socket ACLINT MTIMER */
-                    riscv_aclint_mtimer_create(memmap[VUL_MODEL_CLINT].base +
-                            i * RISCV_ACLINT_DEFAULT_MTIMER_SIZE,
-                        RISCV_ACLINT_DEFAULT_MTIMER_SIZE,
-                        base_hartid, hart_count,
-                        0x4000,
-                        0xbff8,
-                       VUL_MODEL_RISCV_ACLINT_DEFAULT_TIMEBASE_FREQ,
-                       false /*as per sifive doc, it's memory mapped and rdtime generates illegal int exception*/);
-                } else {
-                    /* Per-socket ACLINT MSWI, MTIMER, and SSWI */
-                    riscv_aclint_swi_create(memmap[VUL_MODEL_CLINT].base +
-                            i * memmap[VUL_MODEL_CLINT].size,
-                        base_hartid, hart_count, false);
-                    riscv_aclint_mtimer_create(memmap[VUL_MODEL_CLINT].base +
-                            i * memmap[VUL_MODEL_CLINT].size +
-                            RISCV_ACLINT_SWI_SIZE,
-                        RISCV_ACLINT_DEFAULT_MTIMER_SIZE,
-                        base_hartid, hart_count,
-                        RISCV_ACLINT_DEFAULT_MTIMECMP,
-                        RISCV_ACLINT_DEFAULT_MTIME,
-                       VUL_MODEL_RISCV_ACLINT_DEFAULT_TIMEBASE_FREQ, false);
-                    riscv_aclint_swi_create(memmap[VUL_MODEL_ACLINT_SSWI].base +
-                            i * memmap[VUL_MODEL_ACLINT_SSWI].size,
-                        base_hartid, hart_count, true);
-                }
-            } else {
-                /* Per-socket SiFive CLINT */
-                riscv_aclint_swi_create(
-                    memmap[VUL_MODEL_CLINT].base + i * memmap[VUL_MODEL_CLINT].size,
-                    base_hartid, hart_count, false);
-                riscv_aclint_mtimer_create(memmap[VUL_MODEL_CLINT].base +
-                        i * memmap[VUL_MODEL_CLINT].size + RISCV_ACLINT_SWI_SIZE,
-                    RISCV_ACLINT_DEFAULT_MTIMER_SIZE, base_hartid, hart_count,
-                    RISCV_ACLINT_DEFAULT_MTIMECMP, RISCV_ACLINT_DEFAULT_MTIME,
-                                           VUL_MODEL_RISCV_ACLINT_DEFAULT_TIMEBASE_FREQ, false);
-            }
+            /* Per-socket SiFive CLINT */
+            riscv_aclint_swi_create(
+                memmap[VUL_MODEL_CLINT].base + i * memmap[VUL_MODEL_CLINT].size,
+                base_hartid, hart_count, false);
+            riscv_aclint_mtimer_create(memmap[VUL_MODEL_CLINT].base +
+                    i * memmap[VUL_MODEL_CLINT].size + RISCV_ACLINT_SWI_SIZE,
+                RISCV_ACLINT_DEFAULT_MTIMER_SIZE, base_hartid, hart_count,
+                RISCV_ACLINT_DEFAULT_MTIMECMP, RISCV_ACLINT_DEFAULT_MTIME,
+                                       VUL_MODEL_RISCV_ACLINT_DEFAULT_TIMEBASE_FREQ, false);
         }
 
-        /* Per-socket interrupt controller */
-        if (s->aia_type == VUL_MODEL_AIA_TYPE_NONE) {
-            s->irqchip[i] = vul_model_create_plic(memmap, i,
-                                             base_hartid, hart_count);
-        } else {
             s->irqchip[i] = vul_model_create_aia(s->aia_type, s->aia_guests,
                                             memmap, i, base_hartid,
                                             hart_count);
-        }
 
         /* Try to use different IRQCHIP instance based device type */
         if (i == 0) {
@@ -1576,100 +1377,6 @@ static void vul_model_machine_instance_init(Object *obj)
     s->acpi = ON_OFF_AUTO_AUTO;
 }
 
-static char *vul_model_get_aia_guests(Object *obj, Error **errp)
-{
-    RISCVVulModelState *s = RISCV_VUL_MODEL_MACHINE(obj);
-    char val[32];
-
-    sprintf(val, "%d", s->aia_guests);
-    return g_strdup(val);
-}
-
-static void vul_model_set_aia_guests(Object *obj, const char *val, Error **errp)
-{
-    RISCVVulModelState *s = RISCV_VUL_MODEL_MACHINE(obj);
-
-    s->aia_guests = atoi(val);
-    if (s->aia_guests < 0 || s->aia_guests > VUL_MODEL_IRQCHIP_MAX_GUESTS) {
-        error_setg(errp, "Invalid number of AIA IMSIC guests");
-        error_append_hint(errp, "Valid values be between 0 and %d.\n",
-                          VUL_MODEL_IRQCHIP_MAX_GUESTS);
-    }
-}
-
-static char *vul_model_get_aia(Object *obj, Error **errp)
-{
-    RISCVVulModelState *s = RISCV_VUL_MODEL_MACHINE(obj);
-    const char *val;
-
-    switch (s->aia_type) {
-    case VUL_MODEL_AIA_TYPE_APLIC:
-        val = "aplic";
-        break;
-    case VUL_MODEL_AIA_TYPE_APLIC_IMSIC:
-        val = "aplic-imsic";
-        break;
-    default:
-        val = "none";
-        break;
-    };
-
-    return g_strdup(val);
-}
-
-static void vul_model_set_aia(Object *obj, const char *val, Error **errp)
-{
-    RISCVVulModelState *s = RISCV_VUL_MODEL_MACHINE(obj);
-
-    if (!strcmp(val, "none")) {
-        s->aia_type = VUL_MODEL_AIA_TYPE_NONE;
-    } else if (!strcmp(val, "aplic")) {
-        s->aia_type = VUL_MODEL_AIA_TYPE_APLIC;
-    } else if (!strcmp(val, "aplic-imsic")) {
-        s->aia_type = VUL_MODEL_AIA_TYPE_APLIC_IMSIC;
-    } else {
-        error_setg(errp, "Invalid AIA interrupt controller type");
-        error_append_hint(errp, "Valid values are none, aplic, and "
-                          "aplic-imsic.\n");
-    }
-}
-
-static bool vul_model_get_aclint(Object *obj, Error **errp)
-{
-    RISCVVulModelState *s = RISCV_VUL_MODEL_MACHINE(obj);
-
-    return s->have_aclint;
-}
-
-static void vul_model_set_aclint(Object *obj, bool value, Error **errp)
-{
-    RISCVVulModelState *s = RISCV_VUL_MODEL_MACHINE(obj);
-
-    s->have_aclint = value;
-}
-
-bool vul_model_is_acpi_enabled(RISCVVulModelState *s)
-{
-    return s->acpi != ON_OFF_AUTO_OFF;
-}
-
-static void vul_model_get_acpi(Object *obj, Visitor *v, const char *name,
-                          void *opaque, Error **errp)
-{
-    RISCVVulModelState *s = RISCV_VUL_MODEL_MACHINE(obj);
-    OnOffAuto acpi = s->acpi;
-
-    visit_type_OnOffAuto(v, name, &acpi, errp);
-}
-
-static void vul_model_set_acpi(Object *obj, Visitor *v, const char *name,
-                          void *opaque, Error **errp)
-{
-    RISCVVulModelState *s = RISCV_VUL_MODEL_MACHINE(obj);
-
-    visit_type_OnOffAuto(v, name, &s->acpi, errp);
-}
-
 static HotplugHandler *vul_model_machine_get_hotplug_handler(MachineState *machine,
                                                         DeviceState *dev)
 {
@@ -1698,7 +1405,6 @@ static void vul_model_machine_device_plug_cb(HotplugHandler *hotplug_dev,
 
 static void vul_model_machine_class_init(ObjectClass *oc, void *data)
 {
-    char str[128];
     MachineClass *mc = MACHINE_CLASS(oc);
     HotplugHandlerClass *hc = HOTPLUG_HANDLER_CLASS(oc);
 
@@ -1723,33 +1429,6 @@ static void vul_model_machine_class_init(ObjectClass *oc, void *data)
 #ifdef CONFIG_TPM
     machine_class_allow_dynamic_sysbus_dev(mc, TYPE_TPM_TIS_SYSBUS);
 #endif
-
-
-    object_class_property_add_bool(oc, "aclint", vul_model_get_aclint,
-                                   vul_model_set_aclint);
-    object_class_property_set_description(oc, "aclint",
-                                          "(TCG only) Set on/off to "
-                                          "enable/disable emulating "
-                                          "ACLINT devices");
-
-    object_class_property_add_str(oc, "aia", vul_model_get_aia,
-                                  vul_model_set_aia);
-    object_class_property_set_description(oc, "aia",
-                                          "Set type of AIA interrupt "
-                                          "controller. Valid values are "
-                                          "none, aplic, and aplic-imsic.");
-
-    object_class_property_add_str(oc, "aia-guests",
-                                  vul_model_get_aia_guests,
-                                  vul_model_set_aia_guests);
-    sprintf(str, "Set number of guest MMIO pages for AIA IMSIC. Valid value "
-                 "should be between 0 and %d.", VUL_MODEL_IRQCHIP_MAX_GUESTS);
-    object_class_property_set_description(oc, "aia-guests", str);
-    object_class_property_add(oc, "acpi", "OnOffAuto",
-                              vul_model_get_acpi, vul_model_set_acpi,
-                              NULL, NULL);
-    object_class_property_set_description(oc, "acpi",
-                                          "Enable ACPI");
 }
 
 static const TypeInfo vul_model_machine_typeinfo = {
