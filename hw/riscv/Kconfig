@@ -67,6 +67,7 @@ config VUL_MODEL
     select FW_CFG_DMA
     select PLATFORM_BUS
     select ACPI
+    select VUL_CSR
 
 config SHAKTI_C
     bool

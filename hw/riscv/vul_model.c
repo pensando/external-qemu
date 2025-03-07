@@ -53,6 +53,7 @@
 #include "hw/display/ramfb.h"
 #include "hw/acpi/aml-build.h"
 #include "qapi/qapi-visit-common.h"
+#include "hw/misc/vul_csr.h"
 
 /*
  * The vul_model_ machine physical address space used by some of the devices
@@ -83,17 +84,18 @@ static bool vul_model_use_kvm_aia(RISCVVulModelState *s)
 
 static const MemMapEntry vul_model_memmap[] = {
     /* Stuff we actually care about in the model */
-    [VUL_MODEL_MROM] =         {     0x1000,       0xf000 }, /* not really in our model, but QEMU wants it for booting */
-    [VUL_MODEL_UART0] =        {    0xf0000,        0x100 },
-    [VUL_MODEL_PLIC] =         { 0x78600000,       0x8000 }, /* not relevant */
-    [VUL_MODEL_APLIC_M] =      { 0x78604000,       0x4000 },
-    [VUL_MODEL_APLIC_S] =      { 0x78608000,       0x4000 },
-    [VUL_MODEL_IMSIC_M] =      { 0x78900000,       0x4000 },
-    [VUL_MODEL_IMSIC_S] =      { 0x78a00000,      0x20000 },
-    [VUL_MODEL_CLINT] =        { 0x7c000000,      0x10000 },
-    [VUL_MODEL_DEBUG] =        { 0x7e000000,       0x1000 },
-    [VUL_MODEL_TEST] =         { 0x7e004000,       0x1000 },
-    [VUL_MODEL_DRAM] =         { 0x80000000,    0x2000000 },
+    [VUL_MODEL_MROM] =         {      0x1000,       0xf000 }, /* not really in our model, but QEMU wants it for booting */
+    [VUL_MODEL_UART0] =        {     0xf0000,        0x100 },
+    [VUL_MODEL_CSRS] =         {  0x10000000, VUL_CSR_SIZE },
+    [VUL_MODEL_PLIC] =         {  0x78600000,       0x8000 }, /* not relevant */
+    [VUL_MODEL_APLIC_M] =      {  0x78604000,       0x4000 },
+    [VUL_MODEL_APLIC_S] =      {  0x78608000,       0x4000 },
+    [VUL_MODEL_IMSIC_M] =      {  0x78900000,       0x4000 },
+    [VUL_MODEL_IMSIC_S] =      {  0x78a00000,      0x20000 },
+    [VUL_MODEL_CLINT] =        {  0x7c000000,      0x10000 },
+    [VUL_MODEL_DEBUG] =        {  0x7e000000,       0x1000 },
+    [VUL_MODEL_TEST] =         {  0x7e004000,       0x1000 },
+    [VUL_MODEL_DRAM] =         {  0x80000000,    0x2000000 },
     /* There are things we don't care about that are present in the virt model, on which this board is based upon,
      * and aren't meaningfully mentioned in the HAPS DTS.
      * Ideally we'd remove anything we don't use, however for some of the entries that requires additional work to make
@@ -1361,6 +1363,8 @@ static void vul_model_machine_init(MachineState *machine)
     } else {
         create_fdt(s, memmap);
     }
+
+    s->vul_csr = vul_csr_create(memmap[VUL_MODEL_CSRS].base);
 
     s->machine_done.notify = vul_model_machine_done;
     qemu_add_machine_init_done_notifier(&s->machine_done);

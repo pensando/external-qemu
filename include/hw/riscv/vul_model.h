@@ -51,6 +51,7 @@ struct RISCVVulModelState {
     DeviceState *irqchip[VUL_MODEL_SOCKETS_MAX];
     PFlashCFI01 *flash[2];
     FWCfgState *fw_cfg;
+    DeviceState *vul_csr;
 
     int fdt_size;
     bool have_aclint;
@@ -82,7 +83,8 @@ enum {
     VUL_MODEL_PCIE_MMIO,
     VUL_MODEL_PCIE_PIO,
     VUL_MODEL_PLATFORM_BUS,
-    VUL_MODEL_PCIE_ECAM
+    VUL_MODEL_PCIE_ECAM,
+    VUL_MODEL_CSRS
 };
 
 enum {
