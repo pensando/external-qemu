@@ -235,4 +235,7 @@ config IOSB
 config XLNX_VERSAL_TRNG
     bool
 
+config VUL_CSR
+    bool
+
 source macio/Kconfig
