@@ -173,3 +173,70 @@ void vul_zmq_write_csr(uint64_t addr, uint32_t data)
         exit(1);
     }
 }
+
+void vul_zmq_read_mem(uint64_t addr, uint8_t *data, size_t size)
+{
+    vul_model_msg_t *msg = (vul_model_msg_t *)ctx.msg_buf;
+
+    if (size >= VUL_ZMQ_BUF_SIZE - sizeof(vul_model_msg_t)) {
+        fprintf(stderr, "%s: msg is too big! (%lu >= %lu)\n", __func__, size,
+                VUL_ZMQ_BUF_SIZE - sizeof(vul_model_msg_t));
+        exit(1);
+    }
+
+    memset(msg, 0, sizeof(vul_model_msg_t));
+    *msg = (vul_model_msg_t) {
+        .type = VUL_MODEL_MSG_OPCODE_MEM_READ,
+        .addr = addr,
+        .size = size,
+    };
+
+    int rc = zmq_send(ctx.zmq_socket, msg, sizeof(vul_model_msg_t), 0);
+    if (rc < 0) {
+        fprintf(stderr, "Error while sending memory read request\n");
+        exit(1);
+    }
+
+    rc = zmq_recv(ctx.zmq_socket, ctx.msg_buf, sizeof(ctx.msg_buf), 0);
+    if (rc < 0) {
+        fprintf(stderr, "Error while receiving memory read response\n");
+        exit(1);
+    } else if (rc != size + sizeof(vul_model_msg_t)) {
+        fprintf(stderr, "Memory read received less data than required: %d != %lu\n", rc,
+                size + sizeof(vul_model_msg_t));
+        exit(1);
+    }
+
+    memcpy(data, msg->data, size);
+}
+
+void vul_zmq_write_mem(uint64_t addr, uint8_t *data, size_t size)
+{
+    vul_model_msg_t *msg = (vul_model_msg_t *)ctx.msg_buf;
+
+    if (size >= VUL_ZMQ_BUF_SIZE - sizeof(vul_model_msg_t)) {
+        fprintf(stderr, "%s: msg is too big! (%lu >= %lu)\n", __func__, size,
+                VUL_ZMQ_BUF_SIZE - sizeof(vul_model_msg_t));
+        exit(1);
+    }
+
+    memset(msg, 0, sizeof(vul_model_msg_t));
+    *msg = (vul_model_msg_t) {
+        .type = VUL_MODEL_MSG_OPCODE_MEM_WRITE,
+        .addr = addr,
+        .size = size,
+    };
+    memcpy(msg->data, data, size);
+
+    int rc = zmq_send(ctx.zmq_socket, msg, sizeof(vul_model_msg_t) + size, 0);
+    if (rc < 0) {
+        fprintf(stderr, "Error while sending memory write request\n");
+        exit(1);
+    }
+
+    rc = zmq_recv(ctx.zmq_socket, ctx.msg_buf, sizeof(ctx.msg_buf), 0);
+    if (rc < 0) {
+        fprintf(stderr, "Error while receiving memory write response\n");
+        exit(1);
+    }
+}
