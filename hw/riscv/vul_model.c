@@ -39,17 +39,13 @@
 #include "hw/intc/riscv_aclint.h"
 #include "hw/intc/riscv_aplic.h"
 #include "hw/intc/riscv_imsic.h"
-#include "hw/intc/sifive_plic.h"
 #include "hw/misc/sifive_test.h"
-#include "hw/platform-bus.h"
 #include "chardev/char.h"
 #include "sysemu/device_tree.h"
 #include "sysemu/sysemu.h"
 #include "sysemu/tcg.h"
 #include "sysemu/kvm.h"
 #include "sysemu/tpm.h"
-#include "hw/pci/pci.h"
-#include "hw/pci-host/gpex.h"
 #include "hw/display/ramfb.h"
 #include "hw/acpi/aml-build.h"
 #include "qapi/qapi-visit-common.h"
@@ -79,15 +75,12 @@ static bool vul_model_use_kvm_aia(RISCVVulModelState *s)
     return kvm_irqchip_in_kernel() && s->aia_type == VUL_MODEL_AIA_TYPE_APLIC_IMSIC;
 }
 
-#define VUL_MODEL_FLASH_SECTOR_SIZE (64 * KiB)
 #define VUL_MODEL_UART0_REG_SHIFT 2
 
 static const MemMapEntry vul_model_memmap[] = {
-    /* Stuff we actually care about in the model */
     [VUL_MODEL_MROM] =         {      0x1000,       0xf000 }, /* not really in our model, but QEMU wants it for booting */
     [VUL_MODEL_UART0] =        {     0xf0000,        0x100 },
     [VUL_MODEL_CSRS] =         {  0x10000000, VUL_CSR_SIZE },
-    [VUL_MODEL_PLIC] =         {  0x78600000,       0x8000 }, /* not relevant */
     [VUL_MODEL_APLIC_M] =      {  0x78604000,       0x4000 },
     [VUL_MODEL_APLIC_S] =      {  0x78608000,       0x4000 },
     [VUL_MODEL_IMSIC_M] =      {  0x78900000,       0x4000 },
@@ -96,144 +89,7 @@ static const MemMapEntry vul_model_memmap[] = {
     [VUL_MODEL_DEBUG] =        {  0x7e000000,       0x1000 },
     [VUL_MODEL_TEST] =         {  0x7e004000,       0x1000 },
     [VUL_MODEL_DRAM] =         {  0x80000000,    0x2000000 },
-    /* There are things we don't care about that are present in the virt model, on which this board is based upon,
-     * and aren't meaningfully mentioned in the HAPS DTS.
-     * Ideally we'd remove anything we don't use, however for some of the entries that requires additional work to make
-     * sure the rest of the model works and doesn't present a tangible benefit for our current use case.
-     * As such, we move these things outside of any memory range we may use. Currently, a good place where to move all
-     * of this stuff is the address region from which LLC should be accessed in SRAM mode. */
-    [VUL_MODEL_FLASH] =        { 0x200000000,     2 * VUL_MODEL_FLASH_SECTOR_SIZE },
-    [VUL_MODEL_RTC] =          { 0x200020000,        0x10000 },
-    [VUL_MODEL_ACLINT_SSWI] =  { 0x200021000,        0x1000 },
-    [VUL_MODEL_PCIE_PIO] =     { 0x200022000,       0x1000 },
-    [VUL_MODEL_PLATFORM_BUS] = { 0x200023000,     0x1000 },
-    [VUL_MODEL_VIRTIO] =       { 0x200024000,        0x1000 },
-    [VUL_MODEL_FW_CFG] =       { 0x200025000,          0x18 },
-    [VUL_MODEL_PCIE_ECAM] =    { 0x200026000,    0x1000 },
-    [VUL_MODEL_PCIE_MMIO] =    { 0x200027000,    0x1000 },
 };
-
-/* PCIe high mmio is fixed for RV32 */
-#define VIRT32_HIGH_PCIE_MMIO_BASE  0x300000000ULL
-#define VIRT32_HIGH_PCIE_MMIO_SIZE  (4 * GiB)
-
-/* PCIe high mmio for RV64, size is fixed but base depends on top of RAM */
-#define VIRT64_HIGH_PCIE_MMIO_SIZE  (16 * GiB)
-
-static MemMapEntry vul_model_high_pcie_memmap;
-
-static PFlashCFI01 *vul_model_flash_create1(RISCVVulModelState *s,
-                                       const char *name,
-                                       const char *alias_prop_name)
-{
-    /*
-     * Create a single flash device.  We use the same parameters as
-     * the flash devices on the ARM vul_model_ board.
-     */
-    DeviceState *dev = qdev_new(TYPE_PFLASH_CFI01);
-
-    qdev_prop_set_uint64(dev, "sector-length", VUL_MODEL_FLASH_SECTOR_SIZE);
-    qdev_prop_set_uint8(dev, "width", 4);
-    qdev_prop_set_uint8(dev, "device-width", 2);
-    qdev_prop_set_bit(dev, "big-endian", false);
-    qdev_prop_set_uint16(dev, "id0", 0x89);
-    qdev_prop_set_uint16(dev, "id1", 0x18);
-    qdev_prop_set_uint16(dev, "id2", 0x00);
-    qdev_prop_set_uint16(dev, "id3", 0x00);
-    qdev_prop_set_string(dev, "name", name);
-
-    object_property_add_child(OBJECT(s), name, OBJECT(dev));
-    object_property_add_alias(OBJECT(s), alias_prop_name,
-                              OBJECT(dev), "drive");
-
-    return PFLASH_CFI01(dev);
-}
-
-static void vul_model_flash_create(RISCVVulModelState *s)
-{
-    s->flash[0] = vul_model_flash_create1(s, "vul_model_.flash0", "pflash0");
-    s->flash[1] = vul_model_flash_create1(s, "vul_model_.flash1", "pflash1");
-}
-
-static void vul_model_flash_map1(PFlashCFI01 *flash,
-                            hwaddr base, hwaddr size,
-                            MemoryRegion *sysmem)
-{
-    DeviceState *dev = DEVICE(flash);
-
-    assert(QEMU_IS_ALIGNED(size, VUL_MODEL_FLASH_SECTOR_SIZE));
-    assert(size / VUL_MODEL_FLASH_SECTOR_SIZE <= UINT32_MAX);
-    qdev_prop_set_uint32(dev, "num-blocks", size / VUL_MODEL_FLASH_SECTOR_SIZE);
-    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
-
-    memory_region_add_subregion(sysmem, base,
-                                sysbus_mmio_get_region(SYS_BUS_DEVICE(dev),
-                                                       0));
-}
-
-static void vul_model_flash_map(RISCVVulModelState *s,
-                           MemoryRegion *sysmem)
-{
-    hwaddr flashsize = vul_model_memmap[VUL_MODEL_FLASH].size / 2;
-    hwaddr flashbase = vul_model_memmap[VUL_MODEL_FLASH].base;
-
-    vul_model_flash_map1(s->flash[0], flashbase, flashsize,
-                    sysmem);
-    vul_model_flash_map1(s->flash[1], flashbase + flashsize, flashsize,
-                    sysmem);
-}
-
-static void create_pcie_irq_map(RISCVVulModelState *s, void *fdt, char *nodename,
-                                uint32_t irqchip_phandle)
-{
-    int pin, dev;
-    uint32_t irq_map_stride = 0;
-    uint32_t full_irq_map[GPEX_NUM_IRQS * GPEX_NUM_IRQS *
-                          FDT_MAX_INT_MAP_WIDTH] = {};
-    uint32_t *irq_map = full_irq_map;
-
-    /* This code creates a standard swizzle of interrupts such that
-     * each device's first interrupt is based on it's PCI_SLOT number.
-     * (See pci_swizzle_map_irq_fn())
-     *
-     * We only need one entry per interrupt in the table (not one per
-     * possible slot) seeing the interrupt-map-mask will allow the table
-     * to wrap to any number of devices.
-     */
-    for (dev = 0; dev < GPEX_NUM_IRQS; dev++) {
-        int devfn = dev * 0x8;
-
-        for (pin = 0; pin < GPEX_NUM_IRQS; pin++) {
-            int irq_nr = PCIE_IRQ + ((pin + PCI_SLOT(devfn)) % GPEX_NUM_IRQS);
-            int i = 0;
-
-            /* Fill PCI address cells */
-            irq_map[i] = cpu_to_be32(devfn << 8);
-            i += FDT_PCI_ADDR_CELLS;
-
-            /* Fill PCI Interrupt cells */
-            irq_map[i] = cpu_to_be32(pin + 1);
-            i += FDT_PCI_INT_CELLS;
-
-            /* Fill interrupt controller phandle and cells */
-            irq_map[i++] = cpu_to_be32(irqchip_phandle);
-            irq_map[i++] = cpu_to_be32(irq_nr);
-            irq_map[i++] = cpu_to_be32(0x4);
-
-            if (!irq_map_stride) {
-                irq_map_stride = i;
-            }
-            irq_map += irq_map_stride;
-        }
-    }
-
-    qemu_fdt_setprop(fdt, nodename, "interrupt-map", full_irq_map,
-                     GPEX_NUM_IRQS * GPEX_NUM_IRQS *
-                     irq_map_stride * sizeof(uint32_t));
-
-    qemu_fdt_setprop_cells(fdt, nodename, "interrupt-map-mask",
-                           0x1800, 0, 0, 0x7);
-}
 
 static void create_fdt_socket_cpus(RISCVVulModelState *s, int socket,
                                    char *clust_name, uint32_t *phandle,
@@ -568,7 +424,6 @@ static void create_fdt_socket_aplic(RISCVVulModelState *s,
 {
     char *aplic_name;
     unsigned long aplic_addr;
-    MachineState *ms = MACHINE(s);
     uint32_t aplic_m_phandle, aplic_s_phandle;
 
     aplic_m_phandle = (*phandle)++;
@@ -594,13 +449,6 @@ static void create_fdt_socket_aplic(RISCVVulModelState *s,
 
     aplic_name = g_strdup_printf("/soc/aplic@%lx", aplic_addr);
 
-    if (!socket) {
-        platform_bus_add_all_fdt_nodes(ms->fdt, aplic_name,
-                                       memmap[VUL_MODEL_PLATFORM_BUS].base,
-                                       memmap[VUL_MODEL_PLATFORM_BUS].size,
-                                       VIRT_PLATFORM_BUS_IRQ);
-    }
-
     g_free(aplic_name);
 
     aplic_phandles[socket] = aplic_s_phandle;
@@ -622,10 +470,7 @@ static void create_fdt_pmu(RISCVVulModelState *s)
 
 static void create_fdt_sockets(RISCVVulModelState *s, const MemMapEntry *memmap,
                                uint32_t *phandle,
-                               uint32_t *irq_mmio_phandle,
-                               uint32_t *irq_pcie_phandle,
-                               uint32_t *irq_virtio_phandle,
-                               uint32_t *msi_pcie_phandle)
+                               uint32_t *irq_mmio_phandle)
 {
     char *clust_name;
     int socket, phandle_pos;
@@ -670,7 +515,6 @@ static void create_fdt_sockets(RISCVVulModelState *s, const MemMapEntry *memmap,
 
     create_fdt_imsic(s, memmap, phandle, intc_phandles,
         &msi_m_phandle, &msi_s_phandle);
-    *msi_pcie_phandle = msi_s_phandle;
 
     /* KVM AIA only has one APLIC instance */
     if (kvm_enabled() && vul_model_use_kvm_aia(s)) {
@@ -695,88 +539,15 @@ static void create_fdt_sockets(RISCVVulModelState *s, const MemMapEntry *memmap,
 
     if (kvm_enabled() && vul_model_use_kvm_aia(s)) {
         *irq_mmio_phandle = xplic_phandles[0];
-        *irq_virtio_phandle = xplic_phandles[0];
-        *irq_pcie_phandle = xplic_phandles[0];
     } else {
         for (socket = 0; socket < socket_count; socket++) {
             if (socket == 0) {
                 *irq_mmio_phandle = xplic_phandles[socket];
-                *irq_virtio_phandle = xplic_phandles[socket];
-                *irq_pcie_phandle = xplic_phandles[socket];
-            }
-            if (socket == 1) {
-                *irq_virtio_phandle = xplic_phandles[socket];
-                *irq_pcie_phandle = xplic_phandles[socket];
-            }
-            if (socket == 2) {
-                *irq_pcie_phandle = xplic_phandles[socket];
             }
         }
     }
 
     riscv_socket_fdt_write_distance_matrix(ms);
-}
-
-static void create_fdt_virtio(RISCVVulModelState *s, const MemMapEntry *memmap,
-                              uint32_t irq_virtio_phandle)
-{
-    int i;
-    char *name;
-    MachineState *ms = MACHINE(s);
-
-    for (i = 0; i < VIRTIO_COUNT; i++) {
-        name = g_strdup_printf("/soc/virtio_mmio@%lx",
-            (long)(memmap[VUL_MODEL_VIRTIO].base + i * memmap[VUL_MODEL_VIRTIO].size));
-        qemu_fdt_add_subnode(ms->fdt, name);
-        qemu_fdt_setprop_string(ms->fdt, name, "compatible", "virtio,mmio");
-        qemu_fdt_setprop_cells(ms->fdt, name, "reg",
-            0x0, memmap[VUL_MODEL_VIRTIO].base + i * memmap[VUL_MODEL_VIRTIO].size,
-            0x0, memmap[VUL_MODEL_VIRTIO].size);
-        qemu_fdt_setprop_cell(ms->fdt, name, "interrupt-parent",
-            irq_virtio_phandle);
-        qemu_fdt_setprop_cells(ms->fdt, name, "interrupts",
-                               VIRTIO_IRQ + i, 0x4);
-        g_free(name);
-    }
-}
-
-static void create_fdt_pcie(RISCVVulModelState *s, const MemMapEntry *memmap,
-                            uint32_t irq_pcie_phandle,
-                            uint32_t msi_pcie_phandle)
-{
-    char *name;
-    MachineState *ms = MACHINE(s);
-
-    name = g_strdup_printf("/soc/pci@%lx",
-        (long) memmap[VUL_MODEL_PCIE_ECAM].base);
-    qemu_fdt_add_subnode(ms->fdt, name);
-    qemu_fdt_setprop_cell(ms->fdt, name, "#address-cells",
-        FDT_PCI_ADDR_CELLS);
-    qemu_fdt_setprop_cell(ms->fdt, name, "#interrupt-cells",
-        FDT_PCI_INT_CELLS);
-    qemu_fdt_setprop_cell(ms->fdt, name, "#size-cells", 0x2);
-    qemu_fdt_setprop_string(ms->fdt, name, "compatible",
-        "pci-host-ecam-generic");
-    qemu_fdt_setprop_string(ms->fdt, name, "device_type", "pci");
-    qemu_fdt_setprop_cell(ms->fdt, name, "linux,pci-domain", 0);
-    qemu_fdt_setprop_cells(ms->fdt, name, "bus-range", 0,
-        memmap[VUL_MODEL_PCIE_ECAM].size / PCIE_MMCFG_SIZE_MIN - 1);
-    qemu_fdt_setprop(ms->fdt, name, "dma-coherent", NULL, 0);
-    qemu_fdt_setprop_cell(ms->fdt, name, "msi-parent", msi_pcie_phandle);
-    qemu_fdt_setprop_cells(ms->fdt, name, "reg", 0,
-        memmap[VUL_MODEL_PCIE_ECAM].base, 0, memmap[VUL_MODEL_PCIE_ECAM].size);
-    qemu_fdt_setprop_sized_cells(ms->fdt, name, "ranges",
-        1, FDT_PCI_RANGE_IOPORT, 2, 0,
-        2, memmap[VUL_MODEL_PCIE_PIO].base, 2, memmap[VUL_MODEL_PCIE_PIO].size,
-        1, FDT_PCI_RANGE_MMIO,
-        2, memmap[VUL_MODEL_PCIE_MMIO].base,
-        2, memmap[VUL_MODEL_PCIE_MMIO].base, 2, memmap[VUL_MODEL_PCIE_MMIO].size,
-        1, FDT_PCI_RANGE_MMIO_64BIT,
-        2, vul_model_high_pcie_memmap.base,
-        2, vul_model_high_pcie_memmap.base, 2, vul_model_high_pcie_memmap.size);
-
-    create_pcie_irq_map(s, ms->fdt, name, irq_pcie_phandle);
-    g_free(name);
 }
 
 static void create_fdt_reset(RISCVVulModelState *s, const MemMapEntry *memmap,
@@ -841,76 +612,15 @@ static void create_fdt_uart(RISCVVulModelState *s, const MemMapEntry *memmap,
     g_free(name);
 }
 
-static void create_fdt_rtc(RISCVVulModelState *s, const MemMapEntry *memmap,
-                           uint32_t irq_mmio_phandle)
-{
-    char *name;
-    MachineState *ms = MACHINE(s);
-
-    name = g_strdup_printf("/soc/rtc@%lx", (long)memmap[VUL_MODEL_RTC].base);
-    qemu_fdt_add_subnode(ms->fdt, name);
-    qemu_fdt_setprop_string(ms->fdt, name, "compatible",
-        "google,goldfish-rtc");
-    qemu_fdt_setprop_cells(ms->fdt, name, "reg",
-        0x0, memmap[VUL_MODEL_RTC].base, 0x0, memmap[VUL_MODEL_RTC].size);
-    qemu_fdt_setprop_cell(ms->fdt, name, "interrupt-parent",
-        irq_mmio_phandle);
-    qemu_fdt_setprop_cells(ms->fdt, name, "interrupts", RTC_IRQ, 0x4);
-    g_free(name);
-}
-
-static void create_fdt_flash(RISCVVulModelState *s, const MemMapEntry *memmap)
-{
-    char *name;
-    MachineState *ms = MACHINE(s);
-    hwaddr flashsize = vul_model_memmap[VUL_MODEL_FLASH].size / 2;
-    hwaddr flashbase = vul_model_memmap[VUL_MODEL_FLASH].base;
-
-    name = g_strdup_printf("/flash@%" PRIx64, flashbase);
-    qemu_fdt_add_subnode(ms->fdt, name);
-    qemu_fdt_setprop_string(ms->fdt, name, "compatible", "cfi-flash");
-    qemu_fdt_setprop_sized_cells(ms->fdt, name, "reg",
-                                 2, flashbase, 2, flashsize,
-                                 2, flashbase + flashsize, 2, flashsize);
-    qemu_fdt_setprop_cell(ms->fdt, name, "bank-width", 4);
-    g_free(name);
-}
-
-static void create_fdt_fw_cfg(RISCVVulModelState *s, const MemMapEntry *memmap)
-{
-    char *nodename;
-    MachineState *ms = MACHINE(s);
-    hwaddr base = memmap[VUL_MODEL_FW_CFG].base;
-    hwaddr size = memmap[VUL_MODEL_FW_CFG].size;
-
-    nodename = g_strdup_printf("/fw-cfg@%" PRIx64, base);
-    qemu_fdt_add_subnode(ms->fdt, nodename);
-    qemu_fdt_setprop_string(ms->fdt, nodename,
-                            "compatible", "qemu,fw-cfg-mmio");
-    qemu_fdt_setprop_sized_cells(ms->fdt, nodename, "reg",
-                                 2, base, 2, size);
-    qemu_fdt_setprop(ms->fdt, nodename, "dma-coherent", NULL, 0);
-    g_free(nodename);
-}
-
 static void finalize_fdt(RISCVVulModelState *s)
 {
-    uint32_t phandle = 1, irq_mmio_phandle = 1, msi_pcie_phandle = 1;
-    uint32_t irq_pcie_phandle = 1, irq_virtio_phandle = 1;
+    uint32_t phandle = 1, irq_mmio_phandle = 1;
 
-    create_fdt_sockets(s, vul_model_memmap, &phandle, &irq_mmio_phandle,
-                       &irq_pcie_phandle, &irq_virtio_phandle,
-                       &msi_pcie_phandle);
-
-    create_fdt_virtio(s, vul_model_memmap, irq_virtio_phandle);
-
-    create_fdt_pcie(s, vul_model_memmap, irq_pcie_phandle, msi_pcie_phandle);
+    create_fdt_sockets(s, vul_model_memmap, &phandle, &irq_mmio_phandle);
 
     create_fdt_reset(s, vul_model_memmap, &phandle);
 
     create_fdt_uart(s, vul_model_memmap, irq_mmio_phandle);
-
-    create_fdt_rtc(s, vul_model_memmap, irq_mmio_phandle);
 }
 
 static void create_fdt(RISCVVulModelState *s, const MemMapEntry *memmap)
@@ -942,70 +652,7 @@ static void create_fdt(RISCVVulModelState *s, const MemMapEntry *memmap)
     qemu_fdt_setprop(ms->fdt, "/chosen", "rng-seed",
                      rng_seed, sizeof(rng_seed));
 
-    create_fdt_flash(s, memmap);
-    create_fdt_fw_cfg(s, memmap);
     create_fdt_pmu(s);
-}
-
-static inline DeviceState *gpex_pcie_init(MemoryRegion *sys_mem,
-                                          hwaddr ecam_base, hwaddr ecam_size,
-                                          hwaddr mmio_base, hwaddr mmio_size,
-                                          hwaddr high_mmio_base,
-                                          hwaddr high_mmio_size,
-                                          hwaddr pio_base,
-                                          DeviceState *irqchip)
-{
-    DeviceState *dev;
-    MemoryRegion *ecam_alias, *ecam_reg;
-    MemoryRegion *mmio_alias, *high_mmio_alias, *mmio_reg;
-    qemu_irq irq;
-    int i;
-
-    dev = qdev_new(TYPE_GPEX_HOST);
-
-    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
-
-    ecam_alias = g_new0(MemoryRegion, 1);
-    ecam_reg = sysbus_mmio_get_region(SYS_BUS_DEVICE(dev), 0);
-    memory_region_init_alias(ecam_alias, OBJECT(dev), "pcie-ecam",
-                             ecam_reg, 0, ecam_size);
-    memory_region_add_subregion(get_system_memory(), ecam_base, ecam_alias);
-
-    mmio_alias = g_new0(MemoryRegion, 1);
-    mmio_reg = sysbus_mmio_get_region(SYS_BUS_DEVICE(dev), 1);
-    memory_region_init_alias(mmio_alias, OBJECT(dev), "pcie-mmio",
-                             mmio_reg, mmio_base, mmio_size);
-    memory_region_add_subregion(get_system_memory(), mmio_base, mmio_alias);
-
-    /* Map high MMIO space */
-    high_mmio_alias = g_new0(MemoryRegion, 1);
-    memory_region_init_alias(high_mmio_alias, OBJECT(dev), "pcie-mmio-high",
-                             mmio_reg, high_mmio_base, high_mmio_size);
-    memory_region_add_subregion(get_system_memory(), high_mmio_base,
-                                high_mmio_alias);
-
-    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 2, pio_base);
-
-    for (i = 0; i < GPEX_NUM_IRQS; i++) {
-        irq = qdev_get_gpio_in(irqchip, PCIE_IRQ + i);
-
-        sysbus_connect_irq(SYS_BUS_DEVICE(dev), i, irq);
-        gpex_set_irq_num(GPEX_HOST(dev), i, PCIE_IRQ + i);
-    }
-
-    return dev;
-}
-
-static FWCfgState *create_fw_cfg(const MachineState *ms)
-{
-    hwaddr base = vul_model_memmap[VUL_MODEL_FW_CFG].base;
-    FWCfgState *fw_cfg;
-
-    fw_cfg = fw_cfg_init_mem_wide(base + 8, base, 8, base + 16,
-                                  &address_space_memory);
-    fw_cfg_add_i16(fw_cfg, FW_CFG_NB_CPUS, (uint16_t)ms->smp.cpus);
-
-    return fw_cfg;
 }
 
 static DeviceState *vul_model_create_aia(RISCVVulModelAIAType aia_type, int aia_guests,
@@ -1072,32 +719,6 @@ static DeviceState *vul_model_create_aia(RISCVVulModelAIAType aia_type, int aia_
     return kvm_enabled() ? aplic_s : aplic_m;
 }
 
-static void create_platform_bus(RISCVVulModelState *s, DeviceState *irqchip)
-{
-    DeviceState *dev;
-    SysBusDevice *sysbus;
-    const MemMapEntry *memmap = vul_model_memmap;
-    int i;
-    MemoryRegion *sysmem = get_system_memory();
-
-    dev = qdev_new(TYPE_PLATFORM_BUS_DEVICE);
-    dev->id = g_strdup(TYPE_PLATFORM_BUS_DEVICE);
-    qdev_prop_set_uint32(dev, "num_irqs", VUL_MODEL_PLATFORM_BUS_NUM_IRQS);
-    qdev_prop_set_uint32(dev, "mmio_size", memmap[VUL_MODEL_PLATFORM_BUS].size);
-    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
-    s->platform_bus_dev = dev;
-
-    sysbus = SYS_BUS_DEVICE(dev);
-    for (i = 0; i < VUL_MODEL_PLATFORM_BUS_NUM_IRQS; i++) {
-        int irq = VIRT_PLATFORM_BUS_IRQ + i;
-        sysbus_connect_irq(sysbus, i, qdev_get_gpio_in(irqchip, irq));
-    }
-
-    memory_region_add_subregion(sysmem,
-                                memmap[VUL_MODEL_PLATFORM_BUS].base,
-                                sysbus_mmio_get_region(sysbus, 0));
-}
-
 static void vul_model_machine_done(Notifier *notifier, void *data)
 {
     RISCVVulModelState *s = container_of(notifier, RISCVVulModelState,
@@ -1109,7 +730,6 @@ static void vul_model_machine_done(Notifier *notifier, void *data)
     const char *firmware_name = riscv_default_firmware_name(&s->soc[0]);
     uint64_t fdt_load_addr;
     uint64_t kernel_entry = 0;
-    BlockBackend *pflash_blk0;
 
     /*
      * An user provided dtb must include everything, including
@@ -1137,26 +757,6 @@ static void vul_model_machine_done(Notifier *notifier, void *data)
 
     firmware_end_addr = riscv_find_and_load_firmware(machine, firmware_name,
                                                      start_addr, NULL);
-
-    pflash_blk0 = pflash_cfi01_get_blk(s->flash[0]);
-    if (pflash_blk0) {
-        if (machine->firmware && !strcmp(machine->firmware, "none") &&
-            !kvm_enabled()) {
-            /*
-             * Pflash was supplied but bios is none and not KVM guest,
-             * let's overwrite the address we jump to after reset to
-             * the base of the flash.
-             */
-            start_addr = vul_model_memmap[VUL_MODEL_FLASH].base;
-        } else {
-            /*
-             * Pflash was supplied but either KVM guest or bios is not none.
-             * In this case, base of the flash would contain S-mode payload.
-             */
-            riscv_setup_firmware_boot(machine);
-            kernel_entry = vul_model_memmap[VUL_MODEL_FLASH].base;
-        }
-    }
 
     if (machine->kernel_filename && !kernel_entry) {
         kernel_start_addr = riscv_calc_kernel_start_addr(&s->soc[0],
@@ -1187,7 +787,7 @@ static void vul_model_machine_init(MachineState *machine)
     MemoryRegion *system_memory = get_system_memory();
     MemoryRegion *mask_rom = g_new(MemoryRegion, 1);
     char *soc_name;
-    DeviceState *mmio_irqchip, *virtio_irqchip, *pcie_irqchip;
+    DeviceState *mmio_irqchip;
     int i, base_hartid, hart_count;
     int socket_count = riscv_socket_count(machine);
 
@@ -1207,7 +807,7 @@ static void vul_model_machine_init(MachineState *machine)
     }
 
     /* Initialize sockets */
-    mmio_irqchip = virtio_irqchip = pcie_irqchip = NULL;
+    mmio_irqchip = NULL;
     for (i = 0; i < socket_count; i++) {
         if (!riscv_socket_check_hartids(machine, i)) {
             error_report("discontinuous hartids in socket%d", i);
@@ -1257,15 +857,6 @@ static void vul_model_machine_init(MachineState *machine)
         /* Try to use different IRQCHIP instance based device type */
         if (i == 0) {
             mmio_irqchip = s->irqchip[i];
-            virtio_irqchip = s->irqchip[i];
-            pcie_irqchip = s->irqchip[i];
-        }
-        if (i == 1) {
-            virtio_irqchip = s->irqchip[i];
-            pcie_irqchip = s->irqchip[i];
-        }
-        if (i == 2) {
-            pcie_irqchip = s->irqchip[i];
         }
     }
 
@@ -1289,13 +880,6 @@ static void vul_model_machine_init(MachineState *machine)
             error_report("Limiting RAM size to 10 GiB");
         }
 #endif
-        vul_model_high_pcie_memmap.base = VIRT32_HIGH_PCIE_MMIO_BASE;
-        vul_model_high_pcie_memmap.size = VIRT32_HIGH_PCIE_MMIO_SIZE;
-    } else {
-        vul_model_high_pcie_memmap.size = VIRT64_HIGH_PCIE_MMIO_SIZE;
-        vul_model_high_pcie_memmap.base = memmap[VUL_MODEL_DRAM].base + machine->ram_size;
-        vul_model_high_pcie_memmap.base =
-            ROUND_UP(vul_model_high_pcie_memmap.base, vul_model_high_pcie_memmap.size);
     }
 
     s->memmap = vul_model_memmap;
@@ -1310,48 +894,12 @@ static void vul_model_machine_init(MachineState *machine)
     memory_region_add_subregion(system_memory, memmap[VUL_MODEL_MROM].base,
                                 mask_rom);
 
-    /*
-     * Init fw_cfg. Must be done before riscv_load_fdt, otherwise the
-     * device tree cannot be altered and we get FDT_ERR_NOSPACE.
-     */
-    s->fw_cfg = create_fw_cfg(machine);
-    rom_set_fw(s->fw_cfg);
-
     /* SiFive Test MMIO device */
     sifive_test_create(memmap[VUL_MODEL_TEST].base);
-
-    /* VirtIO MMIO devices */
-    for (i = 0; i < VIRTIO_COUNT; i++) {
-        sysbus_create_simple("virtio-mmio",
-            memmap[VUL_MODEL_VIRTIO].base + i * memmap[VUL_MODEL_VIRTIO].size,
-            qdev_get_gpio_in(virtio_irqchip, VIRTIO_IRQ + i));
-    }
-
-    gpex_pcie_init(system_memory,
-                   memmap[VUL_MODEL_PCIE_ECAM].base,
-                   memmap[VUL_MODEL_PCIE_ECAM].size,
-                   memmap[VUL_MODEL_PCIE_MMIO].base,
-                   memmap[VUL_MODEL_PCIE_MMIO].size,
-                   vul_model_high_pcie_memmap.base,
-                   vul_model_high_pcie_memmap.size,
-                   memmap[VUL_MODEL_PCIE_PIO].base,
-                   pcie_irqchip);
-
-    create_platform_bus(s, mmio_irqchip);
 
     serial_mm_init(system_memory, memmap[VUL_MODEL_UART0].base,
                    VUL_MODEL_UART0_REG_SHIFT, qdev_get_gpio_in(mmio_irqchip, UART0_IRQ), 399193,
                    serial_hd(0), DEVICE_LITTLE_ENDIAN);
-
-    sysbus_create_simple("goldfish_rtc", memmap[VUL_MODEL_RTC].base,
-        qdev_get_gpio_in(mmio_irqchip, RTC_IRQ));
-
-    for (i = 0; i < ARRAY_SIZE(s->flash); i++) {
-        /* Map legacy -drive if=pflash to machine properties */
-        pflash_cfi01_legacy_drive(s->flash[i],
-                                  drive_get(IF_PFLASH, 0, i));
-    }
-    vul_model_flash_map(s, system_memory);
 
     /* load/create device tree */
     if (machine->dtb) {
@@ -1374,8 +922,6 @@ static void vul_model_machine_instance_init(Object *obj)
 {
     RISCVVulModelState *s = RISCV_VUL_MODEL_MACHINE(obj);
 
-    vul_model_flash_create(s);
-
     s->oem_id = g_strndup(ACPI_BUILD_APPNAME6, 6);
     s->oem_table_id = g_strndup(ACPI_BUILD_APPNAME8, 8);
     s->acpi = ON_OFF_AUTO_AUTO;
@@ -1392,25 +938,9 @@ static HotplugHandler *vul_model_machine_get_hotplug_handler(MachineState *machi
     return NULL;
 }
 
-static void vul_model_machine_device_plug_cb(HotplugHandler *hotplug_dev,
-                                        DeviceState *dev, Error **errp)
-{
-    RISCVVulModelState *s = RISCV_VUL_MODEL_MACHINE(hotplug_dev);
-
-    if (s->platform_bus_dev) {
-        MachineClass *mc = MACHINE_GET_CLASS(s);
-
-        if (device_is_dynamic_sysbus(mc, dev)) {
-            platform_bus_link_device(PLATFORM_BUS_DEVICE(s->platform_bus_dev),
-                                     SYS_BUS_DEVICE(dev));
-        }
-    }
-}
-
 static void vul_model_machine_class_init(ObjectClass *oc, void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
-    HotplugHandlerClass *hc = HOTPLUG_HANDLER_CLASS(oc);
 
     mc->desc = "RISC-V Vulcano simulation board";
     mc->init = vul_model_machine_init;
@@ -1426,8 +956,6 @@ static void vul_model_machine_class_init(ObjectClass *oc, void *data)
     mc->default_ram_id = "riscv_vul_model_board.ram";
     assert(!mc->get_hotplug_handler);
     mc->get_hotplug_handler = vul_model_machine_get_hotplug_handler;
-
-    hc->plug = vul_model_machine_device_plug_cb;
 
     machine_class_allow_dynamic_sysbus_dev(mc, TYPE_RAMFB_DEVICE);
 #ifdef CONFIG_TPM
