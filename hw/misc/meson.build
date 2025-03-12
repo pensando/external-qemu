@@ -156,3 +156,4 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
 system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
 
 specific_ss.add(when: 'CONFIG_VUL_CSR', if_true: files('vul_csr.c'))
+specific_ss.add(when: 'CONFIG_VUL_MEM', if_true: files('vul_mem.c'))
