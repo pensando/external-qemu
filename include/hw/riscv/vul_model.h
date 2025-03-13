@@ -47,9 +47,12 @@ struct RISCVVulModelState {
     RISCVHartArrayState soc[VUL_MODEL_SOCKETS_MAX];
     DeviceState *irqchip[VUL_MODEL_SOCKETS_MAX];
     DeviceState *vul_csr;
+    DeviceState *vul_mem;
 
     int fdt_size;
     bool have_aclint;
+    bool use_ssram;
+    size_t nicram_size;
     RISCVVulModelAIAType aia_type;
     int aia_guests;
     char *oem_id;

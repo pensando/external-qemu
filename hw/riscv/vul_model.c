@@ -50,6 +50,7 @@
 #include "hw/acpi/aml-build.h"
 #include "qapi/qapi-visit-common.h"
 #include "hw/misc/vul_csr.h"
+#include "hw/misc/vul_mem.h"
 #include "vul_zmq.h"
 
 /*
@@ -81,6 +82,7 @@ static bool vul_model_use_kvm_aia(RISCVVulModelState *s)
 static const MemMapEntry vul_model_memmap[] = {
     [VUL_MODEL_MROM] =         {      0x1000,       0xf000 }, /* not really in our model, but QEMU wants it for booting */
     [VUL_MODEL_UART0] =        {     0xf0000,        0x100 },
+    [VUL_MODEL_SRAM] =         {    0x400000,      0x80000 },
     [VUL_MODEL_CSRS] =         {  0x10000000, VUL_CSR_SIZE },
     [VUL_MODEL_APLIC_M] =      {  0x78604000,       0x4000 },
     [VUL_MODEL_APLIC_S] =      {  0x78608000,       0x4000 },
@@ -169,6 +171,15 @@ static void create_fdt_socket_memory(RISCVVulModelState *s,
     char *mem_name;
     uint64_t addr, size;
     MachineState *ms = MACHINE(s);
+
+    addr = memmap[VUL_MODEL_SRAM].base + riscv_socket_mem_offset(ms, socket);
+    size = riscv_socket_mem_size(ms, socket);
+    mem_name = g_strdup_printf("/memory@%lx", (long)addr);
+    qemu_fdt_add_subnode(ms->fdt, mem_name);
+    qemu_fdt_setprop_cells(ms->fdt, mem_name, "reg",
+                           addr >> 32, addr, size >> 32, size);
+    qemu_fdt_setprop_string(ms->fdt, mem_name, "device_type", "memory");
+    riscv_socket_fdt_write_id(ms, mem_name, socket);
 
     addr = memmap[VUL_MODEL_DRAM].base + riscv_socket_mem_offset(ms, socket);
     size = riscv_socket_mem_size(ms, socket);
@@ -726,11 +737,17 @@ static void vul_model_machine_done(Notifier *notifier, void *data)
                                          machine_done);
     const MemMapEntry *memmap = vul_model_memmap;
     MachineState *machine = MACHINE(s);
-    target_ulong start_addr = memmap[VUL_MODEL_DRAM].base;
+    target_ulong start_addr;
     target_ulong firmware_end_addr, kernel_start_addr;
     const char *firmware_name = riscv_default_firmware_name(&s->soc[0]);
     uint64_t fdt_load_addr;
     uint64_t kernel_entry = 0;
+
+    if (s->use_ssram) {
+        start_addr = memmap[VUL_MODEL_SRAM].base;
+    } else {
+        start_addr = memmap[VUL_MODEL_DRAM].base + s->nicram_size;
+    }
 
     /*
      * An user provided dtb must include everything, including
@@ -767,8 +784,8 @@ static void vul_model_machine_done(Notifier *notifier, void *data)
                                          kernel_start_addr, true, NULL);
     }
 
-    fdt_load_addr = riscv_compute_fdt_addr(memmap[VUL_MODEL_DRAM].base,
-                                           memmap[VUL_MODEL_DRAM].size,
+    fdt_load_addr = riscv_compute_fdt_addr(memmap[VUL_MODEL_DRAM].base + s->nicram_size,
+                                           memmap[VUL_MODEL_DRAM].size - s->nicram_size,
                                            machine);
     riscv_load_fdt(fdt_load_addr, machine->fdt);
 
@@ -787,6 +804,7 @@ static void vul_model_machine_init(MachineState *machine)
     RISCVVulModelState *s = RISCV_VUL_MODEL_MACHINE(machine);
     MemoryRegion *system_memory = get_system_memory();
     MemoryRegion *mask_rom = g_new(MemoryRegion, 1);
+    MemoryRegion *llc = g_new(MemoryRegion, 1);
     char *soc_name;
     DeviceState *mmio_irqchip;
     int i, base_hartid, hart_count;
@@ -871,7 +889,7 @@ static void vul_model_machine_init(MachineState *machine)
 
     /* Check that the amount of RAM the user asked is the one we expect (otherwise our memory map may not make much
      * sense) */
-    assert(machine->ram_size <= memmap[VUL_MODEL_DRAM].size);
+    assert(machine->ram_size == memmap[VUL_MODEL_SRAM].size);
 
     if (riscv_is_32bit(&s->soc[0])) {
 #if HOST_LONG_BITS == 64
@@ -885,15 +903,29 @@ static void vul_model_machine_init(MachineState *machine)
 
     s->memmap = vul_model_memmap;
 
-    /* register system main memory (actual RAM) */
-    memory_region_add_subregion(system_memory, memmap[VUL_MODEL_DRAM].base,
-        machine->ram);
+    /* register SRAM boot memory */
+    memory_region_add_subregion(system_memory, memmap[VUL_MODEL_SRAM].base,
+                            machine->ram);
 
     /* boot rom */
     memory_region_init_rom(mask_rom, NULL, "riscv_vul_model_board.mrom",
                            memmap[VUL_MODEL_MROM].size, &error_fatal);
     memory_region_add_subregion(system_memory, memmap[VUL_MODEL_MROM].base,
                                 mask_rom);
+
+    vul_zmq_init();
+
+    /* Register QEMU-backed RAM. The real LLC region where FW executes in real HW is 32 MiB big. For modeling purposes,
+     * we need to partition such memory between QEMU's own RAM (to execute Zephyr and store Zephyr dedicated data) and
+     * the model's RAM (which is hosted by the model and has a much higher accessing cost, but it's where things like
+     * config space and data to DMA needs to live). */
+    memory_region_init_ram(llc, NULL, "riscv_vul_model_board.llc",
+                           memmap[VUL_MODEL_DRAM].size - s->nicram_size, &error_fatal);
+    memory_region_add_subregion(system_memory,
+                                memmap[VUL_MODEL_DRAM].base + s->nicram_size,
+                                llc);
+    s->vul_mem = vul_mem_create(memmap[VUL_MODEL_DRAM].base, s->nicram_size);
+    s->vul_csr = vul_csr_create(memmap[VUL_MODEL_CSRS].base);
 
     /* SiFive Test MMIO device */
     sifive_test_create(memmap[VUL_MODEL_TEST].base);
@@ -912,9 +944,6 @@ static void vul_model_machine_init(MachineState *machine)
     } else {
         create_fdt(s, memmap);
     }
-
-    vul_zmq_init();
-    s->vul_csr = vul_csr_create(memmap[VUL_MODEL_CSRS].base);
 
     s->machine_done.notify = vul_model_machine_done;
     qemu_add_machine_init_done_notifier(&s->machine_done);
@@ -940,6 +969,62 @@ static HotplugHandler *vul_model_machine_get_hotplug_handler(MachineState *machi
     return NULL;
 }
 
+static bool vul_model_get_ssram(Object *obj, Error **errp)
+{
+    RISCVVulModelState *s = RISCV_VUL_MODEL_MACHINE(obj);
+
+    return s->use_ssram;
+}
+
+static void vul_model_set_ssram(Object *obj, bool value, Error **errp)
+{
+    RISCVVulModelState *s = RISCV_VUL_MODEL_MACHINE(obj);
+
+    s->use_ssram = value;
+}
+
+static char *vul_model_get_nicram(Object *obj, Error **errp)
+{
+    RISCVVulModelState *s = RISCV_VUL_MODEL_MACHINE(obj);
+    char val[32];
+
+    sprintf(val, "%zu B\n", s->nicram_size);
+
+    return g_strdup(val);
+}
+
+static void vul_model_set_nicram(Object *obj, const char *val, Error **errp)
+{
+    RISCVVulModelState *s = RISCV_VUL_MODEL_MACHINE(obj);
+
+    char unit;
+    size_t base_val;
+    int rc = sscanf(val, "%zu%c", &base_val, &unit);
+    if (rc != 2) {
+        goto nicram_err;
+    }
+
+    switch (unit) {
+        case 'b':
+            s->nicram_size = base_val;
+            break;
+        case 'k':
+            s->nicram_size = base_val * 1024;
+            break;
+        case 'M':
+            s->nicram_size = base_val * 1024 * 1024;
+            break;
+        default:
+            goto nicram_err;
+    }
+
+    return;
+
+nicram_err:
+    error_setg(errp, "Invalid NIC RAM memory size");
+    error_append_hint(errp, "Valid format is <size><b|k|M>.\n");
+}
+
 static void vul_model_machine_class_init(ObjectClass *oc, void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
@@ -963,6 +1048,16 @@ static void vul_model_machine_class_init(ObjectClass *oc, void *data)
 #ifdef CONFIG_TPM
     machine_class_allow_dynamic_sysbus_dev(mc, TYPE_TPM_TIS_SYSBUS);
 #endif
+
+    object_class_property_add_bool(oc, "ssram", vul_model_get_ssram,
+                                   vul_model_set_ssram);
+    object_class_property_set_description(oc, "ssram",
+                                          "Use an SSRAM to boot from, rather than starting directly from LLC");
+
+    object_class_property_add_str(oc, "nicram", vul_model_get_nicram,
+                                  vul_model_set_nicram);
+    object_class_property_set_description(oc, "nicram",
+                                          "The size of the memory portion to redirect into NIC RAM.");
 }
 
 static const TypeInfo vul_model_machine_typeinfo = {

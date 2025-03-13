@@ -68,6 +68,7 @@ config VUL_MODEL
     select PLATFORM_BUS
     select ACPI
     select VUL_CSR
+    select VUL_MEM
 
 config SHAKTI_C
     bool
