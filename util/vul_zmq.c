@@ -142,6 +142,12 @@ uint32_t vul_zmq_read_csr(uint64_t addr)
         exit(1);
     }
 
+    if (msg->type != VUL_MODEL_MSG_OPCODE_STATUS && msg->status != 0) {
+        fprintf(stderr, "%s @ 0x%lx unexpected server response: type = %d, status = %d\n",
+                __func__, addr, msg->type, msg->status);
+        exit(1);
+    }
+
     uint32_t reg_read;
     memcpy(&reg_read, msg->data, sizeof(uint32_t));
     return reg_read;
@@ -170,6 +176,12 @@ void vul_zmq_write_csr(uint64_t addr, uint32_t data)
     rc = zmq_recv(ctx.zmq_socket, ctx.msg_buf, sizeof(ctx.msg_buf), 0);
     if (rc < 0) {
         fprintf(stderr, "Error while receiving CSR write response\n");
+        exit(1);
+    }
+
+    if (msg->type != VUL_MODEL_MSG_OPCODE_STATUS && msg->status != 0) {
+        fprintf(stderr, "%s @ 0x%lx -> 0x%x unexpected server response: type = %d, status = %d\n",
+                __func__, addr, data, msg->type, msg->status);
         exit(1);
     }
 }
@@ -207,6 +219,12 @@ void vul_zmq_read_mem(uint64_t addr, uint8_t *data, size_t size)
         exit(1);
     }
 
+    if (msg->type != VUL_MODEL_MSG_OPCODE_STATUS && msg->status != 0) {
+        fprintf(stderr, "%s @ 0x%lx unexpected server response: type = %d, status = %d\n",
+                __func__, addr, msg->type, msg->status);
+        exit(1);
+    }
+
     memcpy(data, msg->data, size);
 }
 
@@ -237,6 +255,17 @@ void vul_zmq_write_mem(uint64_t addr, uint8_t *data, size_t size)
     rc = zmq_recv(ctx.zmq_socket, ctx.msg_buf, sizeof(ctx.msg_buf), 0);
     if (rc < 0) {
         fprintf(stderr, "Error while receiving memory write response\n");
+        exit(1);
+    }
+
+    if (msg->type != VUL_MODEL_MSG_OPCODE_STATUS && msg->status != 0) {
+        fprintf(stderr, "%s @ 0x%lx unexpected server response: type = %d, status = %d. Data dump:\n",
+                __func__, addr, msg->type, msg->status);
+        for (unsigned i = 0; i < size; i++) {
+            fprintf(stderr, "%hhx ", data[i]);
+        }
+
+        fprintf(stderr, "\n");
         exit(1);
     }
 }
