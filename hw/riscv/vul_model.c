@@ -50,6 +50,7 @@
 #include "hw/acpi/aml-build.h"
 #include "qapi/qapi-visit-common.h"
 #include "hw/misc/vul_csr.h"
+#include "vul_zmq.h"
 
 /*
  * The vul_model_ machine physical address space used by some of the devices
@@ -912,6 +913,7 @@ static void vul_model_machine_init(MachineState *machine)
         create_fdt(s, memmap);
     }
 
+    vul_zmq_init();
     s->vul_csr = vul_csr_create(memmap[VUL_MODEL_CSRS].base);
 
     s->machine_done.notify = vul_model_machine_done;
