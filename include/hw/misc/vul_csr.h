@@ -15,15 +15,10 @@ OBJECT_DECLARE_SIMPLE_TYPE(VulCSRState, VUL_CSR);
  */
 #define VUL_CSR_SIZE (0x70000000ULL - 0x10000000ULL)
 
-#define VUL_CSR_ZMQ_BUF_SIZE 131072
-
 struct VulCSRState {
     SysBusDevice parent_obj;
     struct MemoryRegion mmio;
     hwaddr base_addr;
-    void *zmq_context;
-    void *zmq_socket;
-    char msg_buf[VUL_CSR_ZMQ_BUF_SIZE];
 };
 
 DeviceState *vul_csr_create(hwaddr addr);

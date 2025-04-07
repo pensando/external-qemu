@@ -203,4 +203,7 @@ config XLNX_VERSAL_TRNG
 config VUL_CSR
     bool
 
+config VUL_MEM
+    bool
+
 source macio/Kconfig

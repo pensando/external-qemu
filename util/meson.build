@@ -119,3 +119,11 @@ elif cpu == 'loongarch64'
 elif cpu in ['ppc', 'ppc64']
   util_ss.add(files('cpuinfo-ppc.c'))
 endif
+
+# Using CONFIG_VUL_MODEL because utils don't have their own KConfig...
+util_ss.add(when: 'CONFIG_VUL_MODEL', if_true: files('vul_zmq.c'))
+# Meson forces us to pass the dependency this way: if CONFIG_VUL_MODEL is not defined, it'll still try to check for
+# libzmq availabilty and this is not ok
+if config_target.get('CONFIG_VUL_MODEL', 'n') == 'y'
+  util_ss.add(dependency('libzmq'))
+endif
