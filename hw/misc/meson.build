@@ -162,7 +162,5 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
 # HPPA devices
 system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
 
-if config_target.get('CONFIG_VUL_CSR', 'n') == 'y'
-    specific_ss.add(files('vul_csr.c'))
-    specific_ss.add(dependency('libzmq'))
-endif
+specific_ss.add(when: 'CONFIG_VUL_CSR', if_true: files('vul_csr.c'))
+specific_ss.add(when: 'CONFIG_VUL_MEM', if_true: files('vul_mem.c'))

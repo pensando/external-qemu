@@ -137,3 +137,10 @@ elif cpu in ['riscv32', 'riscv64']
 elif cpu == 's390x'
   util_ss.add(files('s390x_pci_mmio.c'))
 endif
+
+# Meson forces us to pass the dependency this way: if CONFIG_VUL_MODEL is not defined, it'll still try to check for
+# libzmq availabilty and this is not ok
+if config_target.get('CONFIG_VUL_MODEL', 'n') == 'y'
+  util_ss.add(files('vul_zmq.c'))
+  util_ss.add(dependency('libzmq'))
+endif
