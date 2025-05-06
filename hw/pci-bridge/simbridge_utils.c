@@ -434,12 +434,36 @@ simc_close(void)
 int
 simc_cfgrd(u_int16_t bdf, u_int16_t addr, u_int8_t size, u_int64_t *val)
 {
-    return simc_do_read(SIMMSG_CFGRD, bdf, 0, addr, size, val);
+    /* Note: prior to Vulcano, the third argument (which carries the BAR for
+     * memory accesses) is unused.  For Vulcano, which handles both type 0
+     * and type 1 accesses, the BAR argument carries the configuration access
+     * type.
+     */
+    return simc_do_read(SIMMSG_CFGRD, bdf, 1, addr, size, val);
 }
 
 int
 simc_cfgwr(u_int16_t bdf, u_int16_t addr, u_int8_t size, u_int64_t val)
 {
+    /* Note: prior to Vulcano, the third argument (which carries the BAR for
+     * memory accesses) is unused.  For Vulcano, which handles both type 0
+     * and type 1 accesses, the BAR argument carries the configuration access
+     * type.
+     */
+    return simc_do_write(SIMMSG_CFGWR, bdf, 1, addr, size, val);
+}
+
+int
+simc_cfgrd_type0(u_int16_t bdf, u_int16_t addr, u_int8_t size, u_int64_t *val)
+{
+    /* Note: type 0 configuration handling is only meaningful for Vulcano. */
+    return simc_do_read(SIMMSG_CFGRD, bdf, 0, addr, size, val);
+}
+
+int
+simc_cfgwr_type0(u_int16_t bdf, u_int16_t addr, u_int8_t size, u_int64_t val)
+{
+    /* Note: type 0 configuration handling is only meaningful for Vulcano. */
     return simc_do_write(SIMMSG_CFGWR, bdf, 0, addr, size, val);
 }
 

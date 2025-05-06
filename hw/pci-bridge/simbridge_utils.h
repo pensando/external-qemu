@@ -100,6 +100,11 @@ void simc_close(void);
 int simc_cfgrd(u_int16_t bdf, u_int16_t addr, u_int8_t size, u_int64_t *val);
 int simc_cfgwr(u_int16_t bdf, u_int16_t addr, u_int8_t size, u_int64_t val);
 
+int simc_cfgrd_type0(u_int16_t bdf,
+                     u_int16_t addr, u_int8_t size, u_int64_t *val);
+int simc_cfgwr_type0(u_int16_t bdf,
+                     u_int16_t addr, u_int8_t size, u_int64_t val);
+
 int simc_memrd(u_int16_t bdf, u_int8_t bar,
                u_int64_t addr, u_int8_t size, u_int64_t *val);
 int simc_memwr(u_int16_t bdf, u_int8_t bar,
