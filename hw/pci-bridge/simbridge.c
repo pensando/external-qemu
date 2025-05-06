@@ -86,6 +86,21 @@ static QemuMutex simdevices_lock;
     OBJECT_CHECK(SimDevice, (obj), TYPE_SIM_DEVICE)
 
 static int
+vulcano_type0_is_enabled(void)
+{
+    static int vulcano_type0_init;
+    static int vulcano_type0_enabled;
+
+    if (!vulcano_type0_init) {
+        vulcano_type0_init = 1;
+        if (getenv("SIMBRIDGE_VULCANO_TYPE0") != NULL) {
+            vulcano_type0_enabled = 1;
+        }
+    }
+    return vulcano_type0_enabled;
+}
+
+static int
 dbgprintf_is_enabled(void)
 {
     static int dbgprintf_init;
@@ -934,9 +949,47 @@ simbridge_read_msg(void *opaque)
 static void simbridge_write_config(PCIDevice *d,
                                    uint32_t address, uint32_t val, int len)
 {
+    if (vulcano_type0_is_enabled()) {
+        /* (Note: yes, the fixed bdf here is ugly, but other parts of this code
+         * already assume that QEMU is configured to place this at 01:00.0.)
+         */
+        uint16_t bdf = bdf_make(1, 0, 0);
+        if (simc_cfgwr_type0(bdf, address, len, val) < 0) {
+            dbgprintf("simbridge_write_config(0x%04x, 0x%x, %d) = 0x%"PRIx32" failed\n",
+                      bdf, address, len, val);
+        } else {
+            dbgprintf("simbridge_write_config(0x%04x, 0x%x, %d) = 0x%"PRIx32"\n",
+                      bdf, address, len, val);
+        }
+    }
+
     pci_bridge_write_config(d, address, val, len);
     pcie_cap_flr_write_config(d, address, val, len);
     pcie_aer_write_config(d, address, val, len);
+}
+
+static uint32_t simbridge_read_config(PCIDevice *d, uint32_t address, int len)
+{
+    uint64_t val;
+
+    if (vulcano_type0_is_enabled()) {
+        /* (Note: yes, the fixed bdf here is ugly, but other parts of this code
+         * already assume that QEMU is configured to place this at 01:00.0.)
+         */
+        uint16_t bdf = bdf_make(1, 0, 0);
+        if (simc_cfgrd_type0(bdf, address, len, &val) == 0) {
+            dbgprintf("simbridge_read_config(0x%04x, 0x%x, %d) = 0x%"PRIx64"\n",
+                      bdf, address, len, val);
+        } else {
+            dbgprintf("simbridge_read_config(0x%04x, 0x%x, %d) failed\n",
+                      bdf, address, len);
+            val = 0xffffffff;
+        }
+    } else {
+        val = pci_default_read_config(d, address, len);
+    }
+
+    return val;
 }
 
 static void simbridge_reset(DeviceState *qdev)
@@ -1078,6 +1131,7 @@ static void simbridge_class_init(ObjectClass *oc, void *data)
     HotplugHandlerClass *hc = HOTPLUG_HANDLER_CLASS(oc);
 
     pdc->config_write = simbridge_write_config;
+    pdc->config_read = simbridge_read_config;
     pdc->realize = simbridge_realizefn;
     pdc->exit = simbridge_exitfn;
     pdc->vendor_id = simbridge_vendor_id();
