@@ -122,6 +122,11 @@ void vul_zmq_init(void)
     }
 }
 
+uint32_t vul_zmq_max_supported_size(void)
+{
+    return MAX_PAYLOAD_SIZE;
+}
+
 uint32_t vul_zmq_read_csr(uint64_t addr)
 {
     vul_model_msg_t *msg = (vul_model_msg_t *)ctx.msg_buf;
@@ -308,4 +313,76 @@ void vul_zmq_write_mem(uint64_t addr, uint8_t *data, size_t size)
         data += to_send;
         size -= to_send;
     } while (size);
+}
+
+static void rst_mem(uint64_t addr, uint32_t size)
+{
+    vul_model_msg_t *msg = (vul_model_msg_t *)ctx.msg_buf;
+
+    memset(msg, 0, sizeof(vul_model_msg_t));
+    *msg = (vul_model_msg_t) {
+        .type = VUL_MODEL_MSG_OPCODE_MEM_RESET,
+        .addr = addr,
+        .size = size,
+    };
+
+    int rc = zmq_send(ctx.zmq_socket, msg, sizeof(vul_model_msg_t) , 0);
+    if (rc < 0) {
+        fprintf(stderr, "Error while sending memory reset request\n");
+        exit(1);
+    }
+
+    rc = zmq_recv(ctx.zmq_socket, ctx.msg_buf, sizeof(ctx.msg_buf), 0);
+    if (rc < 0) {
+        fprintf(stderr, "Error while receiving memory reset response\n");
+        exit(1);
+    }
+
+    if (msg->type != VUL_MODEL_MSG_OPCODE_STATUS && msg->status != 0) {
+        fprintf(stderr, "%s @ 0x%lx unexpected server response: type = %d, status = %d.\n",
+                __func__, addr, msg->type, msg->status);
+        exit(1);
+    }
+}
+
+#define RST_CHUNK_SIZE 0x40000
+void vul_zmq_rst_mem(uint64_t addr, uint32_t size)
+{
+    do {
+        uint32_t to_rst = size < RST_CHUNK_SIZE ? size : RST_CHUNK_SIZE;
+        rst_mem(addr, to_rst);
+        addr += to_rst;
+        size -= to_rst;
+    } while (size);
+}
+
+void vul_zmq_step_db(uint64_t addr, uint64_t data)
+{
+    vul_model_msg_t *msg = (vul_model_msg_t *)ctx.msg_buf;
+
+    memset(msg, 0, sizeof(vul_model_msg_t));
+    *msg = (vul_model_msg_t) {
+        .type = VUL_MODEL_MSG_OPCODE_DOORBELL,
+        .addr = addr,
+        .size = sizeof(uint64_t),
+    };
+    memcpy(msg->data, &data, sizeof(uint64_t));
+
+    int rc = zmq_send(ctx.zmq_socket, msg, sizeof(vul_model_msg_t) + sizeof(uint64_t), 0);
+    if (rc < 0) {
+        fprintf(stderr, "Error while sending doorbell request\n");
+        exit(1);
+    }
+
+    rc = zmq_recv(ctx.zmq_socket, ctx.msg_buf, sizeof(ctx.msg_buf), 0);
+    if (rc < 0) {
+        fprintf(stderr, "Error while receiving doorbell response\n");
+        exit(1);
+    }
+
+    if (msg->type != VUL_MODEL_MSG_OPCODE_STATUS && msg->status != 0) {
+        fprintf(stderr, "%s @ 0x%lx unexpected server response: type = %d, status = %d. Data = %lx.\n",
+                __func__, addr, msg->type, msg->status, data);
+        exit(1);
+    }
 }
