@@ -69,6 +69,7 @@ config VUL_MODEL
     select ACPI
     select VUL_CSR
     select VUL_MEM
+    select MODACC
 
 config SHAKTI_C
     bool

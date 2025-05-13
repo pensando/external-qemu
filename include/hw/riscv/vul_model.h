@@ -48,6 +48,7 @@ struct RISCVVulModelState {
     DeviceState *irqchip[VUL_MODEL_SOCKETS_MAX];
     DeviceState *vul_csr;
     DeviceState *vul_mem;
+    DeviceState *acc;
 
     int fdt_size;
     bool have_aclint;
@@ -73,7 +74,8 @@ enum {
     VUL_MODEL_IMSIC_S,
     VUL_MODEL_SRAM,
     VUL_MODEL_DRAM,
-    VUL_MODEL_CSRS
+    VUL_MODEL_CSRS,
+    VUL_MODEL_ACC,
 };
 
 enum {

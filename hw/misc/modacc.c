@@ -122,7 +122,7 @@ static void copy_data_from_mem(ModAccState *s, uint64_t base_addr)
 
 static void perform_op(ModAccState *s)
 {
-    assert(s->regs.size <= (s->regs.status & STATUS_MAX_DMA_SIZE_MASK));
+    assert(s->regs.size <= s->region_size - sizeof(s->regs));
 
     enum ctrl_opcode opcode = (s->regs.ctrl & CTRL_OPCODE_MASK) >> CTRL_OPCODE_LSB;
 
@@ -156,12 +156,14 @@ static void perform_op(ModAccState *s)
             break;
         case CTRL_OPCODE_DB:
             copy_data_from_mem(s, addr);
-            vul_zmq_step_db(addr, s->tmp_buf_u64[0] & 0xffffffff);
+            vul_zmq_step_db(addr, s->tmp_buf_u64[0]);
             break;
         default:
             fprintf(stderr, "Unknown modacc opcode %u\n", opcode);
             exit(1);
     }
+
+    s->regs.ctrl &= ~(CTRL_START_MASK);
 }
 
 static void modacc_write(void *opaque, hwaddr addr, uint64_t data, unsigned int size)

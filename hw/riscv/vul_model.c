@@ -49,6 +49,7 @@
 #include "hw/display/ramfb.h"
 #include "hw/acpi/aml-build.h"
 #include "qapi/qapi-visit-common.h"
+#include "hw/misc/modacc.h"
 #include "hw/misc/vul_csr.h"
 #include "hw/misc/vul_mem.h"
 #include "vul_zmq.h"
@@ -82,6 +83,7 @@ static bool vul_model_use_kvm_aia(RISCVVulModelState *s)
 static const MemMapEntry vul_model_memmap[] = {
     [VUL_MODEL_MROM] =         {      0x1000,       0xf000 }, /* not really in our model, but QEMU wants it for booting */
     [VUL_MODEL_UART0] =        {     0xf0000,        0x100 },
+    [VUL_MODEL_ACC] =          {    0x200000,     0x100000 },
     [VUL_MODEL_SRAM] =         {    0x400000,      0x80000 },
     [VUL_MODEL_CSRS] =         {  0x10000000, VUL_CSR_SIZE },
     [VUL_MODEL_APLIC_M] =      {  0x78604000,       0x4000 },
@@ -926,6 +928,7 @@ static void vul_model_machine_init(MachineState *machine)
                                 llc);
     s->vul_mem = vul_mem_create(memmap[VUL_MODEL_DRAM].base, s->nicram_size);
     s->vul_csr = vul_csr_create(memmap[VUL_MODEL_CSRS].base);
+    s->acc = modacc_create(memmap[VUL_MODEL_ACC].base, memmap[VUL_MODEL_ACC].size);
 
     /* SiFive Test MMIO device */
     sifive_test_create(memmap[VUL_MODEL_TEST].base);
