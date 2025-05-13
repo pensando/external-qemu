@@ -68,6 +68,8 @@ typedef struct vul_model_msg_s {
     uint8_t     data[0];    // custom data
 } vul_model_msg_t;
 
+#define MAX_PAYLOAD_SIZE (VUL_ZMQ_BUF_SIZE - sizeof(vul_model_msg_t))
+
 static inline void zmq_endpoint(char *endpoint, size_t len)
 {
     const char *user_str = getenv("ZMQ_SOC_DIR");
@@ -186,13 +188,13 @@ void vul_zmq_write_csr(uint64_t addr, uint32_t data)
     }
 }
 
-void vul_zmq_read_mem(uint64_t addr, uint8_t *data, size_t size)
+static void read_mem(uint64_t addr, uint8_t *data, size_t size)
 {
     vul_model_msg_t *msg = (vul_model_msg_t *)ctx.msg_buf;
 
-    if (size >= VUL_ZMQ_BUF_SIZE - sizeof(vul_model_msg_t)) {
+    if (size > MAX_PAYLOAD_SIZE) {
         fprintf(stderr, "%s: msg is too big! (%lu >= %lu)\n", __func__, size,
-                VUL_ZMQ_BUF_SIZE - sizeof(vul_model_msg_t));
+                MAX_PAYLOAD_SIZE);
         exit(1);
     }
 
@@ -228,13 +230,24 @@ void vul_zmq_read_mem(uint64_t addr, uint8_t *data, size_t size)
     memcpy(data, msg->data, size);
 }
 
-void vul_zmq_write_mem(uint64_t addr, uint8_t *data, size_t size)
+void vul_zmq_read_mem(uint64_t addr, uint8_t *data, size_t size)
+{
+    do {
+        size_t to_read = size < MAX_PAYLOAD_SIZE ? size : MAX_PAYLOAD_SIZE;
+        read_mem(addr, data, to_read);
+        addr += to_read;
+        data += to_read;
+        size -= to_read;
+    } while (size);
+}
+
+static void write_mem(uint64_t addr, uint8_t *data, size_t size)
 {
     vul_model_msg_t *msg = (vul_model_msg_t *)ctx.msg_buf;
 
-    if (size >= VUL_ZMQ_BUF_SIZE - sizeof(vul_model_msg_t)) {
+    if (size > MAX_PAYLOAD_SIZE) {
         fprintf(stderr, "%s: msg is too big! (%lu >= %lu)\n", __func__, size,
-                VUL_ZMQ_BUF_SIZE - sizeof(vul_model_msg_t));
+                MAX_PAYLOAD_SIZE);
         exit(1);
     }
 
@@ -268,4 +281,15 @@ void vul_zmq_write_mem(uint64_t addr, uint8_t *data, size_t size)
         fprintf(stderr, "\n");
         exit(1);
     }
+}
+
+void vul_zmq_write_mem(uint64_t addr, uint8_t *data, size_t size)
+{
+    do {
+        size_t to_send = size < MAX_PAYLOAD_SIZE ? size : MAX_PAYLOAD_SIZE;
+        write_mem(addr, data, to_send);
+        addr += to_send;
+        data += to_send;
+        size -= to_send;
+    } while (size);
 }
