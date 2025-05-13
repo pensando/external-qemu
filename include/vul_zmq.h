@@ -14,9 +14,9 @@ typedef struct vul_zmq_ctx_s {
 
 void vul_zmq_init(void);
 
-/* The Vulcano model operates with the expectation only 32b register read/writes can happen */
+/* The Vulcano model reads support only 32b accesses per time */
 uint32_t vul_zmq_read_csr(uint64_t addr);
-void vul_zmq_write_csr(uint64_t addr, uint32_t data);
+void vul_zmq_write_csr(uint64_t addr, uint32_t *data, size_t size, uint32_t data_entry_num_words, uint32_t reg_entry_num_words);
 
 void vul_zmq_read_mem(uint64_t addr, uint8_t *data, size_t size);
 void vul_zmq_write_mem(uint64_t addr, uint8_t *data, size_t size);

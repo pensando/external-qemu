@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <memory.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -155,19 +156,21 @@ uint32_t vul_zmq_read_csr(uint64_t addr)
     return reg_read;
 }
 
-void vul_zmq_write_csr(uint64_t addr, uint32_t data)
+static void write_csr(uint64_t addr, uint32_t *data, size_t size, uint32_t data_entry_num_words, uint32_t reg_entry_num_words)
 {
     vul_model_msg_t *msg = (vul_model_msg_t *)ctx.msg_buf;
+
+    assert(size <= MAX_PAYLOAD_SIZE);
 
     memset(msg, 0, sizeof(vul_model_msg_t) + sizeof(uint64_t));
     *msg = (vul_model_msg_t) {
         .type = VUL_MODEL_MSG_OPCODE_REG_WRITE,
         .addr = addr,
-        .size = sizeof(uint32_t),
-        .entry_size = (1 << 16) | 1, /* Magic bits to implement a 32b write. See model's code for mode details */
+        .size = size,
+        .entry_size = (data_entry_num_words << 16) | reg_entry_num_words,
     };
 
-    memcpy(msg->data, &data, sizeof(data));
+    memcpy(msg->data, data, size);
 
     int rc = zmq_send(ctx.zmq_socket, msg, sizeof(vul_model_msg_t) + sizeof(uint32_t), 0);
     if (rc < 0) {
@@ -186,6 +189,19 @@ void vul_zmq_write_csr(uint64_t addr, uint32_t data)
                 __func__, addr, data, msg->type, msg->status);
         exit(1);
     }
+}
+
+void vul_zmq_write_csr(uint64_t addr, uint32_t *data, size_t size, uint32_t data_entry_num_words, uint32_t reg_entry_num_words)
+{
+    assert((size & 0x3) == 0);
+    do {
+        /* Make sure we don't do any partial, unaligned register write */
+        size_t to_send = (size < MAX_PAYLOAD_SIZE ? size : MAX_PAYLOAD_SIZE) & (~0x3);
+        write_csr(addr, data, to_send, data_entry_num_words, reg_entry_num_words);
+        addr += to_send;
+        data += (to_send / sizeof(uint32_t));
+        size -= to_send;
+    } while (size);
 }
 
 static void read_mem(uint64_t addr, uint8_t *data, size_t size)
