@@ -190,8 +190,8 @@ static void write_csr(uint64_t addr, uint32_t *data, size_t size, uint32_t data_
     }
 
     if (msg->type != VUL_MODEL_MSG_OPCODE_STATUS && msg->status != 0) {
-        fprintf(stderr, "%s @ 0x%lx -> 0x%x unexpected server response: type = %d, status = %d\n",
-                __func__, addr, data, msg->type, msg->status);
+        fprintf(stderr, "%s @ 0x%lx unexpected server response: type = %d, status = %d\n",
+                __func__, addr, msg->type, msg->status);
         exit(1);
     }
 }
