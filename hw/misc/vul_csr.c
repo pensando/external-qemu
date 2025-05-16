@@ -27,12 +27,13 @@ static void vul_csr_write(void *opaque, hwaddr addr, uint64_t data, unsigned int
 
     assert(size <= sizeof(uint64_t));
 
-    /* The size limitations present in the read are not present in the write, however reading multiple words in one
-     * go has a quite tricky protocol and, anyway, the model still handles writes 32b at the time. Make our life simpler
-     * by defaulting to a solution similar to the read */
-    vul_zmq_write_csr(s->base_addr + addr, data & 0xffffffff);
+    /* Because we don't have all the info we need here to determine certain parameters, the only safe thing we can do
+     * are 32b writes */
+    uint32_t val = data & 0xffffffff;
+    vul_zmq_write_csr(s->base_addr + addr, &val, sizeof(uint32_t), 1, 1);
     if (size > sizeof(uint32_t)) {
-        vul_zmq_write_csr(s->base_addr + addr + sizeof(uint32_t), data >> 32);
+        val = data >> 32;
+        vul_zmq_write_csr(s->base_addr + addr + sizeof(uint32_t), &val, sizeof(uint32_t), 1, 1);
     }
 }
 

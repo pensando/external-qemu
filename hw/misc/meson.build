@@ -164,3 +164,4 @@ system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
 
 specific_ss.add(when: 'CONFIG_VUL_CSR', if_true: files('vul_csr.c'))
 specific_ss.add(when: 'CONFIG_VUL_MEM', if_true: files('vul_mem.c'))
+specific_ss.add(when: 'CONFIG_MODACC', if_true: files('modacc.c'))

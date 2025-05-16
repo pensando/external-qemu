@@ -241,4 +241,7 @@ config VUL_CSR
 config VUL_MEM
     bool
 
+config MODACC
+    bool
+
 source macio/Kconfig

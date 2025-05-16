@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <memory.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -68,6 +69,8 @@ typedef struct vul_model_msg_s {
     uint8_t     data[0];    // custom data
 } vul_model_msg_t;
 
+#define MAX_PAYLOAD_SIZE (VUL_ZMQ_BUF_SIZE - sizeof(vul_model_msg_t))
+
 static inline void zmq_endpoint(char *endpoint, size_t len)
 {
     const char *user_str = getenv("ZMQ_SOC_DIR");
@@ -119,6 +122,11 @@ void vul_zmq_init(void)
     }
 }
 
+uint32_t vul_zmq_max_supported_size(void)
+{
+    return MAX_PAYLOAD_SIZE;
+}
+
 uint32_t vul_zmq_read_csr(uint64_t addr)
 {
     vul_model_msg_t *msg = (vul_model_msg_t *)ctx.msg_buf;
@@ -153,19 +161,21 @@ uint32_t vul_zmq_read_csr(uint64_t addr)
     return reg_read;
 }
 
-void vul_zmq_write_csr(uint64_t addr, uint32_t data)
+static void write_csr(uint64_t addr, uint32_t *data, size_t size, uint32_t data_entry_num_words, uint32_t reg_entry_num_words)
 {
     vul_model_msg_t *msg = (vul_model_msg_t *)ctx.msg_buf;
+
+    assert(size <= MAX_PAYLOAD_SIZE);
 
     memset(msg, 0, sizeof(vul_model_msg_t) + sizeof(uint64_t));
     *msg = (vul_model_msg_t) {
         .type = VUL_MODEL_MSG_OPCODE_REG_WRITE,
         .addr = addr,
-        .size = sizeof(uint32_t),
-        .entry_size = (1 << 16) | 1, /* Magic bits to implement a 32b write. See model's code for mode details */
+        .size = size,
+        .entry_size = (data_entry_num_words << 16) | reg_entry_num_words,
     };
 
-    memcpy(msg->data, &data, sizeof(data));
+    memcpy(msg->data, data, size);
 
     int rc = zmq_send(ctx.zmq_socket, msg, sizeof(vul_model_msg_t) + sizeof(uint32_t), 0);
     if (rc < 0) {
@@ -180,19 +190,32 @@ void vul_zmq_write_csr(uint64_t addr, uint32_t data)
     }
 
     if (msg->type != VUL_MODEL_MSG_OPCODE_STATUS && msg->status != 0) {
-        fprintf(stderr, "%s @ 0x%lx -> 0x%x unexpected server response: type = %d, status = %d\n",
-                __func__, addr, data, msg->type, msg->status);
+        fprintf(stderr, "%s @ 0x%lx unexpected server response: type = %d, status = %d\n",
+                __func__, addr, msg->type, msg->status);
         exit(1);
     }
 }
 
-void vul_zmq_read_mem(uint64_t addr, uint8_t *data, size_t size)
+void vul_zmq_write_csr(uint64_t addr, uint32_t *data, size_t size, uint32_t data_entry_num_words, uint32_t reg_entry_num_words)
+{
+    assert((size & 0x3) == 0);
+    do {
+        /* Make sure we don't do any partial, unaligned register write */
+        size_t to_send = (size < MAX_PAYLOAD_SIZE ? size : MAX_PAYLOAD_SIZE) & (~0x3);
+        write_csr(addr, data, to_send, data_entry_num_words, reg_entry_num_words);
+        addr += to_send;
+        data += (to_send / sizeof(uint32_t));
+        size -= to_send;
+    } while (size);
+}
+
+static void read_mem(uint64_t addr, uint8_t *data, size_t size)
 {
     vul_model_msg_t *msg = (vul_model_msg_t *)ctx.msg_buf;
 
-    if (size >= VUL_ZMQ_BUF_SIZE - sizeof(vul_model_msg_t)) {
+    if (size > MAX_PAYLOAD_SIZE) {
         fprintf(stderr, "%s: msg is too big! (%lu >= %lu)\n", __func__, size,
-                VUL_ZMQ_BUF_SIZE - sizeof(vul_model_msg_t));
+                MAX_PAYLOAD_SIZE);
         exit(1);
     }
 
@@ -228,13 +251,24 @@ void vul_zmq_read_mem(uint64_t addr, uint8_t *data, size_t size)
     memcpy(data, msg->data, size);
 }
 
-void vul_zmq_write_mem(uint64_t addr, uint8_t *data, size_t size)
+void vul_zmq_read_mem(uint64_t addr, uint8_t *data, size_t size)
+{
+    do {
+        size_t to_read = size < MAX_PAYLOAD_SIZE ? size : MAX_PAYLOAD_SIZE;
+        read_mem(addr, data, to_read);
+        addr += to_read;
+        data += to_read;
+        size -= to_read;
+    } while (size);
+}
+
+static void write_mem(uint64_t addr, uint8_t *data, size_t size)
 {
     vul_model_msg_t *msg = (vul_model_msg_t *)ctx.msg_buf;
 
-    if (size >= VUL_ZMQ_BUF_SIZE - sizeof(vul_model_msg_t)) {
+    if (size > MAX_PAYLOAD_SIZE) {
         fprintf(stderr, "%s: msg is too big! (%lu >= %lu)\n", __func__, size,
-                VUL_ZMQ_BUF_SIZE - sizeof(vul_model_msg_t));
+                MAX_PAYLOAD_SIZE);
         exit(1);
     }
 
@@ -266,6 +300,89 @@ void vul_zmq_write_mem(uint64_t addr, uint8_t *data, size_t size)
         }
 
         fprintf(stderr, "\n");
+        exit(1);
+    }
+}
+
+void vul_zmq_write_mem(uint64_t addr, uint8_t *data, size_t size)
+{
+    do {
+        size_t to_send = size < MAX_PAYLOAD_SIZE ? size : MAX_PAYLOAD_SIZE;
+        write_mem(addr, data, to_send);
+        addr += to_send;
+        data += to_send;
+        size -= to_send;
+    } while (size);
+}
+
+static void rst_mem(uint64_t addr, uint32_t size)
+{
+    vul_model_msg_t *msg = (vul_model_msg_t *)ctx.msg_buf;
+
+    memset(msg, 0, sizeof(vul_model_msg_t));
+    *msg = (vul_model_msg_t) {
+        .type = VUL_MODEL_MSG_OPCODE_MEM_RESET,
+        .addr = addr,
+        .size = size,
+    };
+
+    int rc = zmq_send(ctx.zmq_socket, msg, sizeof(vul_model_msg_t) , 0);
+    if (rc < 0) {
+        fprintf(stderr, "Error while sending memory reset request\n");
+        exit(1);
+    }
+
+    rc = zmq_recv(ctx.zmq_socket, ctx.msg_buf, sizeof(ctx.msg_buf), 0);
+    if (rc < 0) {
+        fprintf(stderr, "Error while receiving memory reset response\n");
+        exit(1);
+    }
+
+    if (msg->type != VUL_MODEL_MSG_OPCODE_STATUS && msg->status != 0) {
+        fprintf(stderr, "%s @ 0x%lx unexpected server response: type = %d, status = %d.\n",
+                __func__, addr, msg->type, msg->status);
+        exit(1);
+    }
+}
+
+#define RST_CHUNK_SIZE 0x40000
+void vul_zmq_rst_mem(uint64_t addr, uint32_t size)
+{
+    do {
+        uint32_t to_rst = size < RST_CHUNK_SIZE ? size : RST_CHUNK_SIZE;
+        rst_mem(addr, to_rst);
+        addr += to_rst;
+        size -= to_rst;
+    } while (size);
+}
+
+void vul_zmq_step_db(uint64_t addr, uint64_t data)
+{
+    vul_model_msg_t *msg = (vul_model_msg_t *)ctx.msg_buf;
+
+    memset(msg, 0, sizeof(vul_model_msg_t));
+    *msg = (vul_model_msg_t) {
+        .type = VUL_MODEL_MSG_OPCODE_DOORBELL,
+        .addr = addr,
+        .size = sizeof(uint64_t),
+    };
+    memcpy(msg->data, &data, sizeof(uint64_t));
+
+    int rc = zmq_send(ctx.zmq_socket, msg, sizeof(vul_model_msg_t) + sizeof(uint64_t), 0);
+    if (rc < 0) {
+        fprintf(stderr, "Error while sending doorbell request\n");
+        exit(1);
+    }
+
+    rc = zmq_recv(ctx.zmq_socket, ctx.msg_buf, sizeof(ctx.msg_buf), 0);
+    if (rc < 0) {
+        fprintf(stderr, "Error while receiving doorbell response\n");
+        exit(1);
+    }
+
+    if (msg->type != VUL_MODEL_MSG_OPCODE_STATUS && msg->status != 0) {
+        fprintf(stderr, "%s @ 0x%lx unexpected server response: type = %d, status = %d. Data = %lx.\n",
+                __func__, addr, msg->type, msg->status, data);
         exit(1);
     }
 }
