@@ -716,8 +716,8 @@ static DeviceState *vul_model_create_aia(RISCVVulModelAIAType aia_type, int aia_
 
         /* This info is hardcoded in the RTL design and Zephyr expects so as well. There is no clean API to set this
          * info, so we go through this wonderful backdoor */
-        memory_region_dispatch_write(&aplic->mmio, 0x1bc0, 0x00900000, MO_UL, MEMTXATTRS_UNSPECIFIED);
-        memory_region_dispatch_write(&aplic->mmio, 0x1bc4, 0x80000000, MO_UL, MEMTXATTRS_UNSPECIFIED);
+        memory_region_dispatch_write(&aplic->mmio, 0x1bc0, 0x78900, MO_UL, MEMTXATTRS_UNSPECIFIED);
+        memory_region_dispatch_write(&aplic->mmio, 0x1bc4, 0x85002000, MO_UL, MEMTXATTRS_UNSPECIFIED);
     }
 
     /* Per-socket S-level APLIC */
