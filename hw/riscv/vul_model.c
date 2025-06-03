@@ -86,6 +86,7 @@ static const MemMapEntry vul_model_memmap[] = {
     [VUL_MODEL_ACC] =          {    0x200000,     0x100000 },
     [VUL_MODEL_SRAM] =         {    0x400000,    0x2000000 },
     [VUL_MODEL_CSRS] =         {  0x10000000, VUL_CSR_SIZE },
+    [VUL_MODEL_FLASH] =        {  0x70000000,     0x8000000},
     [VUL_MODEL_APLIC_M] =      {  0x78604000,       0x4000 },
     [VUL_MODEL_APLIC_S] =      {  0x78608000,       0x4000 },
     [VUL_MODEL_IMSIC_M] =      {  0x78900000,       0x4000 },
@@ -95,6 +96,65 @@ static const MemMapEntry vul_model_memmap[] = {
     [VUL_MODEL_TEST] =         {  0x7e004000,       0x1000 },
     [VUL_MODEL_DRAM] =         {  0x80000000,    0x2000000 },
 };
+
+#define VUL_MODEL_FLASH_SECTOR_SIZE (4 * KiB)
+
+static PFlashCFI01 *vul_model_flash_create1(RISCVVulModelState *s,
+                                            const char *name,
+                                            const char *alias_prop_name)
+{
+    /*
+     * Create a single flash device.  We use the same parameters as
+     * the flash devices on the ARM virt board.
+     */
+    DeviceState *dev = qdev_new(TYPE_PFLASH_CFI01);
+
+    qdev_prop_set_uint64(dev, "sector-length", VUL_MODEL_FLASH_SECTOR_SIZE);
+    qdev_prop_set_uint8(dev, "width", 4);
+    qdev_prop_set_uint8(dev, "device-width", 4);
+    qdev_prop_set_bit(dev, "big-endian", false);
+    qdev_prop_set_uint16(dev, "id0", 0x89);
+    qdev_prop_set_uint16(dev, "id1", 0x18);
+    qdev_prop_set_uint16(dev, "id2", 0x00);
+    qdev_prop_set_uint16(dev, "id3", 0x00);
+    qdev_prop_set_string(dev, "name", name);
+
+    object_property_add_child(OBJECT(s), name, OBJECT(dev));
+    object_property_add_alias(OBJECT(s), alias_prop_name,
+                              OBJECT(dev), "drive");
+
+    return PFLASH_CFI01(dev);
+}
+
+static void vul_model_flash_create(RISCVVulModelState *s)
+{
+    s->flash = vul_model_flash_create1(s, "vul_model.flash0", "pflash0");
+}
+
+static void vul_model_flash_map1(PFlashCFI01 *flash,
+                                hwaddr base, hwaddr size,
+                                MemoryRegion *sysmem)
+{
+    DeviceState *dev = DEVICE(flash);
+
+    assert(QEMU_IS_ALIGNED(size, VUL_MODEL_FLASH_SECTOR_SIZE));
+    assert(size / VUL_MODEL_FLASH_SECTOR_SIZE <= UINT32_MAX);
+    qdev_prop_set_uint32(dev, "num-blocks", size / VUL_MODEL_FLASH_SECTOR_SIZE);
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+
+    memory_region_add_subregion(sysmem, base,
+                                sysbus_mmio_get_region(SYS_BUS_DEVICE(dev),
+                                                       0));
+}
+
+static void vul_model_flash_map(RISCVVulModelState *s,
+                                MemoryRegion *sysmem)
+{
+    hwaddr flashsize = vul_model_memmap[VUL_MODEL_FLASH].size;
+    hwaddr flashbase = vul_model_memmap[VUL_MODEL_FLASH].base;
+
+    vul_model_flash_map1(s->flash, flashbase, flashsize, sysmem);
+}
 
 static void create_fdt_socket_cpus(RISCVVulModelState *s, int socket,
                                    char *clust_name, uint32_t *phandle,
@@ -626,6 +686,22 @@ static void create_fdt_uart(RISCVVulModelState *s, const MemMapEntry *memmap,
     g_free(name);
 }
 
+static void create_fdt_flash(RISCVVulModelState *s, const MemMapEntry *memmap)
+{
+    char *name;
+    MachineState *ms = MACHINE(s);
+    hwaddr flashsize = vul_model_memmap[VUL_MODEL_FLASH].size;
+    hwaddr flashbase = vul_model_memmap[VUL_MODEL_FLASH].base;
+
+    name = g_strdup_printf("/flash@%" PRIx64, flashbase);
+    qemu_fdt_add_subnode(ms->fdt, name);
+    qemu_fdt_setprop_string(ms->fdt, name, "compatible", "cfi-flash");
+    qemu_fdt_setprop_sized_cells(ms->fdt, name, "reg",
+                                 2, flashbase, 2, flashsize);
+    qemu_fdt_setprop_cell(ms->fdt, name, "bank-width", 4);
+    g_free(name);
+}
+
 static void finalize_fdt(RISCVVulModelState *s)
 {
     uint32_t phandle = 1, irq_mmio_phandle = 1;
@@ -665,6 +741,8 @@ static void create_fdt(RISCVVulModelState *s, const MemMapEntry *memmap)
     qemu_guest_getrandom_nofail(rng_seed, sizeof(rng_seed));
     qemu_fdt_setprop(ms->fdt, "/chosen", "rng-seed",
                      rng_seed, sizeof(rng_seed));
+
+    create_fdt_flash(s, memmap);
 
     create_fdt_pmu(s);
 }
@@ -937,6 +1015,8 @@ static void vul_model_machine_init(MachineState *machine)
                    VUL_MODEL_UART0_REG_SHIFT, qdev_get_gpio_in(mmio_irqchip, UART0_IRQ), 399193,
                    serial_hd(0), DEVICE_LITTLE_ENDIAN);
 
+    vul_model_flash_map(s, system_memory);
+
     /* load/create device tree */
     if (machine->dtb) {
         machine->fdt = load_device_tree(machine->dtb, &s->fdt_size);
@@ -955,6 +1035,8 @@ static void vul_model_machine_init(MachineState *machine)
 static void vul_model_machine_instance_init(Object *obj)
 {
     RISCVVulModelState *s = RISCV_VUL_MODEL_MACHINE(obj);
+
+    vul_model_flash_create(s);
 
     s->oem_id = g_strndup(ACPI_BUILD_APPNAME6, 6);
     s->oem_table_id = g_strndup(ACPI_BUILD_APPNAME8, 8);
