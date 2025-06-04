@@ -49,6 +49,7 @@ struct RISCVVulModelState {
     DeviceState *vul_csr;
     DeviceState *vul_mem;
     DeviceState *acc;
+    PFlashCFI01 *flash;
 
     int fdt_size;
     bool have_aclint;
@@ -74,6 +75,7 @@ enum {
     VUL_MODEL_IMSIC_S,
     VUL_MODEL_SRAM,
     VUL_MODEL_DRAM,
+    VUL_MODEL_FLASH,
     VUL_MODEL_CSRS,
     VUL_MODEL_ACC,
 };
