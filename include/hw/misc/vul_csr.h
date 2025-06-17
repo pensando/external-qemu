@@ -13,7 +13,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(VulCSRState, VUL_CSR);
  * The math is derived from:
  * https://amdcloud.sharepoint.com/:x:/r/sites/AINICVulcano/Shared%20Documents/ASIC%20Design/02-Specs/NOC/Vulcano_NOC_datasheet.xlsx?d=wab4799562c764a9da3e6ddab85f8d091&csf=1&web=1&e=G53fse
  */
-#define VUL_CSR_SIZE (0x70000000ULL - 0x10000000ULL)
+#define VUL_CSR_SIZE (0x70000000ULL - 0x8000000ULL)
 
 struct VulCSRState {
     SysBusDevice parent_obj;
