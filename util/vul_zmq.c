@@ -167,7 +167,7 @@ static void write_csr(uint64_t addr, uint32_t *data, size_t size, uint32_t data_
 
     assert(size <= MAX_PAYLOAD_SIZE);
 
-    memset(msg, 0, sizeof(vul_model_msg_t) + sizeof(uint64_t));
+    memset(msg, 0, sizeof(vul_model_msg_t) + size);
     *msg = (vul_model_msg_t) {
         .type = VUL_MODEL_MSG_OPCODE_REG_WRITE,
         .addr = addr,
@@ -177,7 +177,7 @@ static void write_csr(uint64_t addr, uint32_t *data, size_t size, uint32_t data_
 
     memcpy(msg->data, data, size);
 
-    int rc = zmq_send(ctx.zmq_socket, msg, sizeof(vul_model_msg_t) + sizeof(uint32_t), 0);
+    int rc = zmq_send(ctx.zmq_socket, msg, sizeof(vul_model_msg_t) + size, 0);
     if (rc < 0) {
         fprintf(stderr, "Error while sending CSR write request\n");
         exit(1);
