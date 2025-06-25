@@ -77,44 +77,46 @@ static uint64_t modacc_read(void *opaque, hwaddr addr, unsigned int size)
     }
 }
 
-static void copy_data_to_mem(ModAccState *s, uint64_t base_addr)
+static void copy_data_to_mem(ModAccState *s)
 {
     const size_t u64_entries = s->regs.size / sizeof(uint64_t);
+    uint64_t offset = 0;
     for (unsigned i = 0; i < u64_entries; i++) {
-        memory_region_dispatch_write(&s->ram, base_addr, s->tmp_buf_u64[i],
+        memory_region_dispatch_write(&s->ram, offset, s->tmp_buf_u64[i],
                                      MO_LEUQ, MEMTXATTRS_UNSPECIFIED);
-        base_addr += sizeof(uint64_t);
+        offset += sizeof(uint64_t);
     }
 
 
     const unsigned off = s->regs.size % sizeof(uint64_t);
     if (off) {
         for (unsigned i = 0; i < off; i++) {
-            memory_region_dispatch_write(&s->ram, base_addr, s->tmp_buf_u8[u64_entries * sizeof(uint64_t) + i],
+            memory_region_dispatch_write(&s->ram, offset, s->tmp_buf_u8[u64_entries * sizeof(uint64_t) + i],
                                          MO_UB, MEMTXATTRS_UNSPECIFIED);
-            base_addr += sizeof(uint8_t);
+            offset += sizeof(uint8_t);
         }
     }
 }
 
-static void copy_data_from_mem(ModAccState *s, uint64_t base_addr)
+static void copy_data_from_mem(ModAccState *s)
 {
     const size_t u64_entries = s->regs.size / sizeof(uint64_t);
+    uint64_t offset = 0;
     for (unsigned i = 0; i < u64_entries; i++) {
-        memory_region_dispatch_read(&s->ram, base_addr, &s->tmp_buf_u64[i],
+        memory_region_dispatch_read(&s->ram, offset, &s->tmp_buf_u64[i],
                                      MO_LEUQ, MEMTXATTRS_UNSPECIFIED);
-        base_addr += sizeof(uint64_t);
+        offset += sizeof(uint64_t);
     }
 
 
-    const unsigned off = s->regs.size % sizeof(uint64_t);
-    if (off) {
-        for (unsigned i = 0; i < off; i++) {
+    const unsigned rem = s->regs.size % sizeof(uint64_t);
+    if (rem) {
+        for (unsigned i = 0; i < rem; i++) {
             uint64_t tmp;
-            memory_region_dispatch_read(&s->ram, base_addr, &tmp,
+            memory_region_dispatch_read(&s->ram, offset, &tmp,
                                          MO_UB, MEMTXATTRS_UNSPECIFIED);
             s->tmp_buf_u8[u64_entries * sizeof(uint64_t) + i] = (uint8_t)tmp;
-            base_addr += sizeof(uint8_t);
+            offset += sizeof(uint8_t);
         }
 
     }
@@ -131,10 +133,10 @@ static void perform_op(ModAccState *s)
     switch (opcode) {
         case CTRL_OPCODE_MEM_RD:
             vul_zmq_read_mem(addr, s->tmp_buf_u8, s->regs.size);
-            copy_data_to_mem(s, addr);
+            copy_data_to_mem(s);
             break;
         case CTRL_OPCODE_MEM_WR:
-            copy_data_from_mem(s, addr);
+            copy_data_from_mem(s);
             vul_zmq_write_mem(addr, s->tmp_buf_u8, s->regs.size);
             break;
         case CTRL_OPCODE_MEM_RST:
@@ -146,16 +148,16 @@ static void perform_op(ModAccState *s)
                 exit(1);
             }
             vul_zmq_read_csr(addr);
-            copy_data_to_mem(s, addr);
+            copy_data_to_mem(s);
             break;
         case CTRL_OPCODE_CSR_WR:
-            copy_data_from_mem(s, addr);
+            copy_data_from_mem(s);
             uint16_t reg_entry_num_words = s->regs.csr_entry_size & CSR_ENTRY_SIZE_REG_ENTRY_NW_MASK;
             uint16_t data_entry_num_words = (s->regs.csr_entry_size & CSR_ENTRY_SIZE_DATA_ENTRY_NW_MASK) >> CSR_ENTRY_SIZE_DATA_ENTRY_NW_LSB;
             vul_zmq_write_csr(addr, (uint32_t *)s->tmp_buf_u64, s->regs.size, data_entry_num_words, reg_entry_num_words);
             break;
         case CTRL_OPCODE_DB:
-            copy_data_from_mem(s, addr);
+            copy_data_from_mem(s);
             vul_zmq_step_db(addr, s->tmp_buf_u64[0]);
             break;
         default:
