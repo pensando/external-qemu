@@ -229,7 +229,7 @@ static void modacc_realize(DeviceState *dev, Error **errp)
 
     memory_region_init_io(&s->mmio, OBJECT(dev), &modacc_ops, s, "mod-acc-io", sizeof(s->regs));
     sysbus_init_mmio(SYS_BUS_DEVICE(OBJECT(dev)), &s->mmio);
-    memory_region_init_ram(&s->ram, NULL, "mod-acc-ram", ram_size, &error_fatal);
+    memory_region_init_ram_device_ptr(&s->ram, NULL, "mod-acc-ram", ram_size, malloc(ram_size));
     memset(&s->regs, 0, sizeof(s->regs));
 
     s->regs.status = (ram_size < TMP_BUF_SIZE ? ram_size : TMP_BUF_SIZE) & STATUS_MAX_DMA_SIZE_MASK;
