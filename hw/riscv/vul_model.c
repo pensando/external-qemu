@@ -52,6 +52,7 @@
 #include "hw/misc/modacc.h"
 #include "hw/misc/vul_csr.h"
 #include "hw/misc/vul_mem.h"
+#include "hw/misc/sockdma.h"
 #include "vul_zmq.h"
 
 /*
@@ -85,6 +86,7 @@ static const MemMapEntry vul_model_memmap[] = {
     [VUL_MODEL_UART0] =        {     0xf0000,        0x100 },
     [VUL_MODEL_ACC] =          {    0x200000,     0x100000 },
     [VUL_MODEL_SRAM] =         {    0x400000,    0x2000000 },
+    [VUL_MODEL_MCTP_SOCKDMA] = {    0xa00000,        0x800 },
     [VUL_MODEL_CSRS] =         {   0x8000000, VUL_CSR_SIZE },
     [VUL_MODEL_FLASH] =        {  0x70000000,     0x8000000},
     [VUL_MODEL_APLIC_M] =      {  0x78604000,       0x4000 },
@@ -1007,6 +1009,7 @@ static void vul_model_machine_init(MachineState *machine)
     s->vul_mem = vul_mem_create(memmap[VUL_MODEL_DRAM].base, s->nicram_size);
     s->vul_csr = vul_csr_create(memmap[VUL_MODEL_CSRS].base);
     s->acc = modacc_create(memmap[VUL_MODEL_ACC].base, memmap[VUL_MODEL_ACC].size);
+    s->mctp_emu = sockdma_create(memmap[VUL_MODEL_MCTP_SOCKDMA].base, memmap[VUL_MODEL_MCTP_SOCKDMA].size, s->mctp_emu_sock);
 
     /* SiFive Test MMIO device */
     sifive_test_create(memmap[VUL_MODEL_TEST].base);
@@ -1110,6 +1113,13 @@ nicram_err:
     error_append_hint(errp, "Valid format is <size><b|k|M>.\n");
 }
 
+static void vul_model_set_mctp_emu_conf(Object *obj, const char *val, Error **errp)
+{
+    RISCVVulModelState *s = RISCV_VUL_MODEL_MACHINE(obj);
+
+    s->mctp_emu_sock = g_strdup(val);
+}
+
 static void vul_model_machine_class_init(ObjectClass *oc, void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
@@ -1143,6 +1153,10 @@ static void vul_model_machine_class_init(ObjectClass *oc, void *data)
                                   vul_model_set_nicram);
     object_class_property_set_description(oc, "nicram",
                                           "The size of the memory portion to redirect into NIC RAM.");
+
+    object_class_property_add_str(oc, "mctp-emu", NULL, vul_model_set_mctp_emu_conf);
+    object_class_property_set_description(oc, "mctp-emu",
+                                          "The string describing the socket to use.");
 }
 
 static const TypeInfo vul_model_machine_typeinfo = {

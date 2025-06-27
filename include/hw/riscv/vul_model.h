@@ -49,12 +49,14 @@ struct RISCVVulModelState {
     DeviceState *vul_csr;
     DeviceState *vul_mem;
     DeviceState *acc;
+    DeviceState *mctp_emu;
     PFlashCFI01 *flash;
 
     int fdt_size;
     bool have_aclint;
     bool use_ssram;
     size_t nicram_size;
+    char *mctp_emu_sock;
     RISCVVulModelAIAType aia_type;
     int aia_guests;
     char *oem_id;
@@ -78,6 +80,7 @@ enum {
     VUL_MODEL_FLASH,
     VUL_MODEL_CSRS,
     VUL_MODEL_ACC,
+    VUL_MODEL_MCTP_SOCKDMA,
 };
 
 enum {
