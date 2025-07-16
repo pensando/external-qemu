@@ -233,25 +233,25 @@ static void create_fdt_socket_memory(RISCVVulModelState *s,
     char *mem_name;
     uint64_t addr, size;
     MachineState *ms = MACHINE(s);
+    int mem_indices[] = {
+        VUL_MODEL_SRAM,
+        VUL_MODEL_DRAM_CC,
+    };
+    int i;
 
-    addr = memmap[VUL_MODEL_SRAM].base + riscv_socket_mem_offset(ms, socket);
-    size = riscv_socket_mem_size(ms, socket);
-    mem_name = g_strdup_printf("/memory@%lx", (long)addr);
-    qemu_fdt_add_subnode(ms->fdt, mem_name);
-    qemu_fdt_setprop_cells(ms->fdt, mem_name, "reg",
-                           addr >> 32, addr, size >> 32, size);
-    qemu_fdt_setprop_string(ms->fdt, mem_name, "device_type", "memory");
-    riscv_socket_fdt_write_id(ms, mem_name, socket);
 
-    addr = memmap[VUL_MODEL_DRAM].base + riscv_socket_mem_offset(ms, socket);
-    size = riscv_socket_mem_size(ms, socket);
-    mem_name = g_strdup_printf("/memory@%lx", (long)addr);
-    qemu_fdt_add_subnode(ms->fdt, mem_name);
-    qemu_fdt_setprop_cells(ms->fdt, mem_name, "reg",
-        addr >> 32, addr, size >> 32, size);
-    qemu_fdt_setprop_string(ms->fdt, mem_name, "device_type", "memory");
-    riscv_socket_fdt_write_id(ms, mem_name, socket);
-    g_free(mem_name);
+    for (i = 0; i < ARRAY_SIZE(mem_indices); i++) {
+        uint64_t addr = memmap[mem_indices[i]].base +
+                        riscv_socket_mem_offset(ms, socket);
+        uint64_t size = riscv_socket_mem_size(ms, socket);
+        char *mem_name = g_strdup_printf("/memory@%lx", (long)addr);
+        qemu_fdt_add_subnode(ms->fdt, mem_name);
+        qemu_fdt_setprop_cells(ms->fdt, mem_name, "reg",
+                               addr >> 32, addr, size >> 32, size);
+        qemu_fdt_setprop_string(ms->fdt, mem_name, "device_type", "memory");
+        riscv_socket_fdt_write_id(ms, mem_name, socket);
+        g_free(mem_name);
+    }
 }
 
 static void create_fdt_socket_clint(RISCVVulModelState *s,
