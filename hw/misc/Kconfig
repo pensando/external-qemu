@@ -209,4 +209,7 @@ config VUL_MEM
 config MODACC
     bool
 
+config SOCKDMA
+    bool
+
 source macio/Kconfig
