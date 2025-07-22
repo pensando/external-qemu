@@ -93,6 +93,7 @@ config VUL_MODEL
     select VUL_CSR
     select VUL_MEM
     select MODACC
+    select SOCKDMA
 
 config SHAKTI_C
     bool
