@@ -1,6 +1,5 @@
 #include "qemu/osdep.h"
 #include "qapi/error.h"
-
 #include "hw/misc/vul_mem.h"
 #include "vul_zmq.h"
 
@@ -34,6 +33,20 @@ DeviceState *vul_mem_create(hwaddr addr, size_t region_size)
     sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, addr);
     return dev;
+}
+
+void vul_mem_add_alias(DeviceState *dev, hwaddr addr, struct MemoryRegion *parent_region)
+{
+    static unsigned alias_cnt = 0;
+    char alias_name[128] = {'\0'};
+
+    VulMemState *s = VUL_MEM(dev);
+
+    snprintf(alias_name, sizeof(alias_name), "vul_mem_alias_%u", alias_cnt);
+
+    MemoryRegion *alias_region = g_new(MemoryRegion, 1);
+    memory_region_init_alias(alias_region, NULL, alias_name, &s->mmio, 0, s->region_size);
+    memory_region_add_subregion(parent_region, addr, alias_region);
 }
 
 static const MemoryRegionOps vul_mem_ops = {

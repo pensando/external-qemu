@@ -15,5 +15,6 @@ struct VulMemState {
 };
 
 DeviceState *vul_mem_create(hwaddr addr, size_t region_size);
+void vul_mem_add_alias(DeviceState *dev, hwaddr addr, struct MemoryRegion *parent_region);
 
 #endif // __HW_VUL_MEM_H
