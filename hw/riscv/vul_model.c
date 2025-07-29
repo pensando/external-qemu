@@ -81,6 +81,8 @@ static bool vul_model_use_kvm_aia(RISCVVulModelState *s)
 
 #define VUL_MODEL_UART0_REG_SHIFT 2
 
+#define VUL_LLC_SIZE 0x2000000
+
 static const MemMapEntry vul_model_memmap[] = {
     [VUL_MODEL_MROM] =         {      0x1000,       0xf000 }, /* not really in our model, but QEMU wants it for booting */
     [VUL_MODEL_UART0] =        {     0xf0000,        0x100 },
@@ -96,7 +98,9 @@ static const MemMapEntry vul_model_memmap[] = {
     [VUL_MODEL_CLINT] =        {  0x7c000000,      0x10000 },
     [VUL_MODEL_DEBUG] =        {  0x7e000000,       0x1000 },
     [VUL_MODEL_TEST] =         {  0x7e004000,       0x1000 },
-    [VUL_MODEL_DRAM] =         {  0x80000000,    0x2000000 },
+    [VUL_MODEL_DRAM_CC] =      {  0x80000000, VUL_LLC_SIZE },
+    [VUL_MODEL_DRAM_NC] =      { 0x100000000, VUL_LLC_SIZE },
+    [VUL_MODEL_DRAM_CC2] =     {0x8100000000, VUL_LLC_SIZE },
 };
 
 #define VUL_MODEL_FLASH_SECTOR_SIZE (4 * KiB)
@@ -232,28 +236,28 @@ static void create_fdt_socket_cpus(RISCVVulModelState *s, int socket,
 static void create_fdt_socket_memory(RISCVVulModelState *s,
                                      const MemMapEntry *memmap, int socket)
 {
-    char *mem_name;
-    uint64_t addr, size;
     MachineState *ms = MACHINE(s);
+    int mem_indices[] = {
+        VUL_MODEL_SRAM,
+        VUL_MODEL_DRAM_CC,
+        VUL_MODEL_DRAM_NC,
+        VUL_MODEL_DRAM_CC2,
+    };
+    int i;
 
-    addr = memmap[VUL_MODEL_SRAM].base + riscv_socket_mem_offset(ms, socket);
-    size = riscv_socket_mem_size(ms, socket);
-    mem_name = g_strdup_printf("/memory@%lx", (long)addr);
-    qemu_fdt_add_subnode(ms->fdt, mem_name);
-    qemu_fdt_setprop_cells(ms->fdt, mem_name, "reg",
-                           addr >> 32, addr, size >> 32, size);
-    qemu_fdt_setprop_string(ms->fdt, mem_name, "device_type", "memory");
-    riscv_socket_fdt_write_id(ms, mem_name, socket);
 
-    addr = memmap[VUL_MODEL_DRAM].base + riscv_socket_mem_offset(ms, socket);
-    size = riscv_socket_mem_size(ms, socket);
-    mem_name = g_strdup_printf("/memory@%lx", (long)addr);
-    qemu_fdt_add_subnode(ms->fdt, mem_name);
-    qemu_fdt_setprop_cells(ms->fdt, mem_name, "reg",
-        addr >> 32, addr, size >> 32, size);
-    qemu_fdt_setprop_string(ms->fdt, mem_name, "device_type", "memory");
-    riscv_socket_fdt_write_id(ms, mem_name, socket);
-    g_free(mem_name);
+    for (i = 0; i < ARRAY_SIZE(mem_indices); i++) {
+        uint64_t addr = memmap[mem_indices[i]].base +
+                        riscv_socket_mem_offset(ms, socket);
+        uint64_t size = riscv_socket_mem_size(ms, socket);
+        char *mem_name = g_strdup_printf("/memory@%lx", (long)addr);
+        qemu_fdt_add_subnode(ms->fdt, mem_name);
+        qemu_fdt_setprop_cells(ms->fdt, mem_name, "reg",
+                               addr >> 32, addr, size >> 32, size);
+        qemu_fdt_setprop_string(ms->fdt, mem_name, "device_type", "memory");
+        riscv_socket_fdt_write_id(ms, mem_name, socket);
+        g_free(mem_name);
+    }
 }
 
 static void create_fdt_socket_clint(RISCVVulModelState *s,
@@ -828,7 +832,7 @@ static void vul_model_machine_done(Notifier *notifier, void *data)
     if (s->use_ssram) {
         start_addr = memmap[VUL_MODEL_SRAM].base;
     } else {
-        start_addr = memmap[VUL_MODEL_DRAM].base + s->nicram_size;
+        start_addr = memmap[VUL_MODEL_DRAM_CC2].base + s->nicram_size;
     }
 
     /*
@@ -866,8 +870,8 @@ static void vul_model_machine_done(Notifier *notifier, void *data)
                                          kernel_start_addr, true, NULL);
     }
 
-    fdt_load_addr = riscv_compute_fdt_addr(memmap[VUL_MODEL_DRAM].base + s->nicram_size,
-                                           memmap[VUL_MODEL_DRAM].size - s->nicram_size,
+    fdt_load_addr = riscv_compute_fdt_addr(memmap[VUL_MODEL_DRAM_CC2].base + s->nicram_size,
+                                           memmap[VUL_MODEL_DRAM_CC2].size - s->nicram_size,
                                            machine);
     riscv_load_fdt(fdt_load_addr, machine->fdt);
 
@@ -880,13 +884,23 @@ static void vul_model_machine_done(Notifier *notifier, void *data)
     riscv_setup_direct_kernel(kernel_entry, fdt_load_addr);
 }
 
+static void add_memory_aliasing(RISCVVulModelState *s, MemoryRegion *orig_region, const MemMapEntry *entry, const char *name)
+{
+    MemoryRegion *llc_alias = g_new(MemoryRegion, 1);
+    MemoryRegion *system_memory = get_system_memory();
+
+    memory_region_init_alias(llc_alias, NULL, name, orig_region, 0, entry->size - s->nicram_size);
+    memory_region_add_subregion(system_memory, entry->base + s->nicram_size, llc_alias);
+    vul_mem_add_alias(s->vul_mem, entry->base, system_memory);
+}
+
 static void vul_model_machine_init(MachineState *machine)
 {
     const MemMapEntry *memmap = vul_model_memmap;
     RISCVVulModelState *s = RISCV_VUL_MODEL_MACHINE(machine);
     MemoryRegion *system_memory = get_system_memory();
     MemoryRegion *mask_rom = g_new(MemoryRegion, 1);
-    MemoryRegion *llc = g_new(MemoryRegion, 1);
+    MemoryRegion *llc_nc = g_new(MemoryRegion, 1);
     char *soc_name;
     DeviceState *mmio_irqchip;
     int i, base_hartid, hart_count;
@@ -1001,15 +1015,21 @@ static void vul_model_machine_init(MachineState *machine)
      * we need to partition such memory between QEMU's own RAM (to execute Zephyr and store Zephyr dedicated data) and
      * the model's RAM (which is hosted by the model and has a much higher accessing cost, but it's where things like
      * config space and data to DMA needs to live). */
-    memory_region_init_ram(llc, NULL, "riscv_vul_model_board.llc",
-                           memmap[VUL_MODEL_DRAM].size - s->nicram_size, &error_fatal);
+    memory_region_init_ram(llc_nc, NULL, "riscv_vul_model_board.llc_nc",
+                           memmap[VUL_MODEL_DRAM_NC].size - s->nicram_size, &error_fatal);
     memory_region_add_subregion(system_memory,
-                                memmap[VUL_MODEL_DRAM].base + s->nicram_size,
-                                llc);
-    s->vul_mem = vul_mem_create(memmap[VUL_MODEL_DRAM].base, s->nicram_size);
+                                memmap[VUL_MODEL_DRAM_NC].base + s->nicram_size,
+                                llc_nc);
+
+    s->vul_mem = vul_mem_create(memmap[VUL_MODEL_DRAM_NC].base, s->nicram_size);
     s->vul_csr = vul_csr_create(memmap[VUL_MODEL_CSRS].base);
     s->acc = modacc_create(memmap[VUL_MODEL_ACC].base, memmap[VUL_MODEL_ACC].size);
     s->mctp_emu = sockdma_create(memmap[VUL_MODEL_MCTP_SOCKDMA].base, memmap[VUL_MODEL_MCTP_SOCKDMA].size, s->mctp_emu_sock);
+
+    /* The LLC is accessible from three different addresses, each with different coherency properties.
+     * In QEMU, we just need to map it so that SW accessing this region won't die of a horrible death. */
+    add_memory_aliasing(s, llc_nc, &memmap[VUL_MODEL_DRAM_CC], "riscv_vul_model_board.llc_cc");
+    add_memory_aliasing(s, llc_nc, &memmap[VUL_MODEL_DRAM_CC2], "riscv_vul_model_board.llc_cc2");
 
     /* SiFive Test MMIO device */
     sifive_test_create(memmap[VUL_MODEL_TEST].base);
