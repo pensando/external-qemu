@@ -7,8 +7,6 @@
  * This code is licensed under the GPL.
  */
 
-#if 0
-
 #include "qemu/osdep.h"
 #include "qapi/error.h"
 #include "hw/core/split-irq.h"
@@ -30,6 +28,7 @@
 #include "hw/watchdog/cmsdk-apb-watchdog.h"
 #include "migration/vmstate.h"
 #include "hw/misc/unimp.h"
+#include "hw/misc/sockdma.h"
 #include "hw/timer/stellaris-gptm.h"
 #include "hw/qdev-clock.h"
 #include "qom/object.h"
@@ -61,6 +60,49 @@ typedef const struct {
     uint32_t dc4;
     uint32_t peripherals;
 } vul_suc_board_info;
+
+#define SOCKDMA_SET_SOCK_ADDR_NAME(i) vul_suc_set_sockdma_sock_name_##i
+
+#define SOCKDMA_DECLARE_SET_SOCK_ADDR(i) \
+    static void SOCKDMA_SET_SOCK_ADDR_NAME(i)(Object *obj, const char *val, \
+                                              Error **errp)                 \
+
+#define SOCKDMA_DEFINE_SET_SOCK_ADDR(i) \
+    static void SOCKDMA_SET_SOCK_ADDR_NAME(i)(Object *obj, const char *val, \
+                                               Error **errp)                \
+    {                                                                       \
+        VulSucMachineState *s = VUL_SUC_MACHINE(obj);                       \
+        s->sockdmas[i].sock_addr = g_strdup(val);                           \
+    }
+
+SOCKDMA_DECLARE_SET_SOCK_ADDR(0);
+
+typedef const struct {
+    const char *name;
+    const char *description;
+    MemMapEntry memmap;
+    void (*set_sock_addr)(Object *, const char *, Error **);
+} sockdma_info;
+
+static sockdma_info sockdma_infos[] = {
+    {
+        .name = "sockdma-mctp",
+        .description = "sockdma for mctp message passing with host",
+        .memmap = {0x44000000, 0x800},
+        .set_sock_addr = SOCKDMA_SET_SOCK_ADDR_NAME(0),
+    },
+};
+
+#define TYPE_VUL_SUC_MACHINE MACHINE_TYPE_NAME("vul_suc")
+OBJECT_DECLARE_SIMPLE_TYPE(VulSucMachineState, VUL_SUC_MACHINE);
+
+struct VulSucMachineState {
+    MachineState parent;
+    struct {
+        char *sock_addr;
+        DeviceState *sockdma_dev;
+    } sockdmas[ARRAY_SIZE(sockdma_infos)];
+};
 
 /* System controller.  */
 
@@ -96,6 +138,8 @@ struct ssys_state {
     uint32_t dc3;
     uint32_t dc4;
 };
+
+SOCKDMA_DEFINE_SET_SOCK_ADDR(0);
 
 static void ssys_update(ssys_state *s)
 {
@@ -953,9 +997,19 @@ static void vul_suc_adc_init(Object *obj)
 
 /* Board init.  */
 static vul_suc_board_info vul_suc_boards[] = {
+  { "vul_suc",
+    0x10010002,
+    0x1073402e,
+    0xffff3fff, /* dc0 16 MB sram, 32 MB flash */
+    0x001133ff,
+    0x030f5317,
+    0x0f0f87ff,
+    0x5000007f,
+    BP_OLED_SSI | BP_GAMEPAD
+  }
 };
 
-static void vul_suc_init(MachineState *ms, vul_suc_board_info *board)
+static void vul_suc_init_board(MachineState *ms, vul_suc_board_info *board)
 {
     static const int uart_irq[] = {5, 6, 33, 34};
     static const int timer_irq[] = {19, 21, 23, 35};
@@ -996,6 +1050,8 @@ static void vul_suc_init(MachineState *ms, vul_suc_board_info *board)
      * 400fc000 hibernation module (unimplemented)
      * 400fd000 flash memory control (unimplemented)
      * 400fe000 system control
+     * 4400_0000 - DFFF_FFFF is reserved. Use for emulated peripherals
+     * 4400_0000 - sockdma mctp
      */
 
     DeviceState *gpio_dev[7], *nvic;
@@ -1308,8 +1364,47 @@ static void vul_suc_init(MachineState *ms, vul_suc_board_info *board)
     armv7m_load_kernel(ARM_CPU(first_cpu), ms->kernel_filename, 0, flash_size);
 }
 
+static void vul_suc_init(MachineState *machine)
+{
+    VulSucMachineState *s = VUL_SUC_MACHINE(machine);
+
+    for (int i = 0; i < ARRAY_SIZE(s->sockdmas); i++) {
+        s->sockdmas[i].sockdma_dev = sockdma_create(sockdma_infos[i].memmap.base,
+                                                    sockdma_infos[i].memmap.size,
+                                                    s->sockdmas[i].sock_addr);
+    }
+
+    vul_suc_init_board(machine, &vul_suc_boards[0]);
+}
+
+static void vul_suc_class_init(ObjectClass *oc, void *data)
+{
+    MachineClass *mc = MACHINE_CLASS(oc);
+
+    mc->desc = "Vulcano SuC (Cortex-M3)";
+    mc->init = vul_suc_init;
+    mc->ignore_memory_transaction_failures = true;
+    mc->default_cpu_type = ARM_CPU_TYPE_NAME("cortex-m3");
+
+
+    for (int i = 0; i < ARRAY_SIZE(sockdma_infos); i++) {
+        object_class_property_add_str(oc, sockdma_infos[i].name, NULL,
+                                      sockdma_infos[i].set_sock_addr);
+        object_class_property_set_description(oc, sockdma_infos[i].name,
+                                              sockdma_infos[i].description);
+    }
+}
+
+static const TypeInfo vul_suc_type = {
+    .name = TYPE_VUL_SUC_MACHINE,
+    .parent = TYPE_MACHINE,
+    .instance_size = sizeof(VulSucMachineState),
+    .class_init = vul_suc_class_init,
+};
+
 static void vul_suc_machine_init(void)
 {
+    type_register_static(&vul_suc_type);
 }
 
 type_init(vul_suc_machine_init)
@@ -1372,4 +1467,3 @@ static void vul_suc_register_types(void)
 }
 
 type_init(vul_suc_register_types)
-#endif
