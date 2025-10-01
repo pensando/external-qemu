@@ -55,6 +55,7 @@ struct RISCVVulModelState {
     DeviceState *fpga_emu;
     PFlashCFI01 *flash;
     SiFiveSPIState *spi0;
+    PFlashCFI01 *test_flash;
 
     int fdt_size;
     bool have_aclint;
@@ -86,6 +87,7 @@ enum {
     VUL_MODEL_DRAM_NC,
     VUL_MODEL_DRAM_CC2,
     VUL_MODEL_FLASH,
+    VUL_MODEL_TEST_FLASH,    /* not in real hardware, only added for testing */
     VUL_MODEL_CSRS,
     VUL_MODEL_ACC,
     VUL_MODEL_MCTP_SOCKDMA,
