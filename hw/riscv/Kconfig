@@ -71,6 +71,8 @@ config VUL_MODEL
     select VUL_MEM
     select MODACC
     select SOCKDMA
+    select SIFIVE_SPI
+    select VUL_FPGA
 
 config SHAKTI_C
     bool

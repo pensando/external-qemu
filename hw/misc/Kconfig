@@ -212,4 +212,7 @@ config MODACC
 config SOCKDMA
     bool
 
+config VUL_FPGA
+    bool
+
 source macio/Kconfig

@@ -23,6 +23,8 @@
 #include "hw/riscv/riscv_hart.h"
 #include "hw/sysbus.h"
 #include "hw/block/flash.h"
+#include "hw/ssi/sifive_spi.h"
+#include "hw/misc/vul_fpga.h"
 
 #define VUL_MODEL_CPUS_MAX_BITS             9
 #define VUL_MODEL_CPUS_MAX                  (1 << VUL_MODEL_CPUS_MAX_BITS)
@@ -50,13 +52,17 @@ struct RISCVVulModelState {
     DeviceState *vul_mem;
     DeviceState *acc;
     DeviceState *mctp_emu;
+    DeviceState *fpga_emu;
     PFlashCFI01 *flash;
+    SiFiveSPIState *spi0;
 
     int fdt_size;
     bool have_aclint;
     bool use_ssram;
     size_t nicram_size;
     char *mctp_emu_sock;
+    char *fpga_emu_sock;
+    bool fpga_emu_is_server;
     RISCVVulModelAIAType aia_type;
     int aia_guests;
     char *oem_id;
@@ -83,6 +89,7 @@ enum {
     VUL_MODEL_CSRS,
     VUL_MODEL_ACC,
     VUL_MODEL_MCTP_SOCKDMA,
+    VUL_MODEL_SPI0,
 };
 
 enum {
