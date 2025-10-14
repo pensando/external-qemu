@@ -53,6 +53,8 @@
 #include "hw/misc/vul_csr.h"
 #include "hw/misc/vul_mem.h"
 #include "hw/misc/sockdma.h"
+#include "hw/misc/vul_fpga.h"
+#include "hw/ssi/ssi.h"
 #include "vul_zmq.h"
 
 /*
@@ -85,6 +87,7 @@ static bool vul_model_use_kvm_aia(RISCVVulModelState *s)
 
 static const MemMapEntry vul_model_memmap[] = {
     [VUL_MODEL_MROM] =         {      0x1000,       0xf000 }, /* not really in our model, but QEMU wants it for booting */
+    [VUL_MODEL_SPI0] =         {     0xb0000,        0x100 },
     [VUL_MODEL_UART0] =        {     0xf0000,        0x100 },
     [VUL_MODEL_ACC] =          {    0x200000,     0x100000 },
     [VUL_MODEL_SRAM] =         {    0x400000,    0x2000000 },
@@ -894,6 +897,28 @@ static void add_memory_aliasing(RISCVVulModelState *s, MemoryRegion *orig_region
     vul_mem_add_alias(s->vul_mem, entry->base, system_memory);
 }
 
+static SiFiveSPIState *sifive_spi0_create(hwaddr addr, char *sock, bool is_server)
+{
+    SiFiveSPIState *spi0;
+
+    // Create SiFive SPI0 device
+    DeviceState *dev = qdev_new(TYPE_SIFIVE_SPI);
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, addr);
+    spi0 = SIFIVE_SPI(dev);
+
+    // Create tcp-ssi device and connect to spi0 bus
+    DeviceState *fpga_dev = vul_fpga_create(sock, is_server);
+    qdev_prop_set_uint8(fpga_dev, "cs", 0);
+    qdev_realize_and_unref(fpga_dev, BUS(spi0->spi), &error_fatal);
+
+    /* Try named CS -> slave CS */
+    qemu_irq cs_line  = qdev_get_gpio_in_named(fpga_dev, SSI_GPIO_CS, 0);
+    sysbus_connect_irq(SYS_BUS_DEVICE(spi0), 1, cs_line);
+
+    return spi0;
+}
+
 static void vul_model_machine_init(MachineState *machine)
 {
     const MemMapEntry *memmap = vul_model_memmap;
@@ -1034,6 +1059,9 @@ static void vul_model_machine_init(MachineState *machine)
     /* SiFive Test MMIO device */
     sifive_test_create(memmap[VUL_MODEL_TEST].base);
 
+    /* Create SPI0 device and populate its peripherals */
+    s->spi0 = sifive_spi0_create(memmap[VUL_MODEL_SPI0].base, s->fpga_emu_sock, s->fpga_emu_is_server);
+
     serial_mm_init(system_memory, memmap[VUL_MODEL_UART0].base,
                    VUL_MODEL_UART0_REG_SHIFT, qdev_get_gpio_in(mmio_irqchip, UART0_IRQ), 399193,
                    serial_hd(0), DEVICE_LITTLE_ENDIAN);
@@ -1061,6 +1089,7 @@ static void vul_model_machine_instance_init(Object *obj)
 
     vul_model_flash_create(s);
 
+    s->fpga_emu_is_server = true;
     s->oem_id = g_strndup(ACPI_BUILD_APPNAME6, 6);
     s->oem_table_id = g_strndup(ACPI_BUILD_APPNAME8, 8);
     s->acpi = ON_OFF_AUTO_AUTO;
@@ -1140,6 +1169,32 @@ static void vul_model_set_mctp_emu_conf(Object *obj, const char *val, Error **er
     s->mctp_emu_sock = g_strdup(val);
 }
 
+static void vul_model_set_fpga_emu_conf(Object *obj, const char *val, Error **errp)
+{
+    RISCVVulModelState *s = RISCV_VUL_MODEL_MACHINE(obj);
+
+    s->fpga_emu_sock = g_strdup(val);
+}
+
+static void vul_model_set_fpga_emu_mode_conf(Object *obj, const char *val, Error **errp)
+{
+    RISCVVulModelState *s = RISCV_VUL_MODEL_MACHINE(obj);
+
+    if (!val) {
+        // no fpga-emu-mode is specified, use default as server
+        s->fpga_emu_is_server = true;
+    }
+
+    if (g_ascii_strcasecmp(val, "client") == 0) {
+        s->fpga_emu_is_server = false;
+    } else if (g_ascii_strcasecmp(val, "server") == 0) {
+        s->fpga_emu_is_server = true;
+    } else {
+        error_setg(errp, "Invalid FPGA emulation mode");
+        error_append_hint(errp, "Valid values are 'client' or 'server'.\n");
+    }
+}
+
 static void vul_model_machine_class_init(ObjectClass *oc, void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
@@ -1177,6 +1232,14 @@ static void vul_model_machine_class_init(ObjectClass *oc, void *data)
     object_class_property_add_str(oc, "mctp-emu", NULL, vul_model_set_mctp_emu_conf);
     object_class_property_set_description(oc, "mctp-emu",
                                           "The string describing the socket to use.");
+
+    object_class_property_add_str(oc, "fpga-emu", NULL, vul_model_set_fpga_emu_conf);
+    object_class_property_set_description(oc, "fpga-emu",
+                                          "The string describing the socket to use.");
+
+    object_class_property_add_str(oc, "fpga-emu-mode", NULL, vul_model_set_fpga_emu_mode_conf);
+    object_class_property_set_description(oc, "fpga-emu-mode",
+                                          "The FPGA emulation mode, either 'client' or 'server'.");
 }
 
 static const TypeInfo vul_model_machine_typeinfo = {
