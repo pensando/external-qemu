@@ -101,6 +101,7 @@ static const MemMapEntry vul_model_memmap[] = {
     [VUL_MODEL_CLINT] =        {  0x7c000000,      0x10000 },
     [VUL_MODEL_DEBUG] =        {  0x7e000000,       0x1000 },
     [VUL_MODEL_TEST] =         {  0x7e004000,       0x1000 },
+    [VUL_MODEL_TEST_FLASH] =   {  0x7f000000,    0x1000000 }, /* not in real hardware, only added for partition testing */
     [VUL_MODEL_DRAM_CC] =      {  0x80000000, VUL_LLC_SIZE },
     [VUL_MODEL_DRAM_NC] =      { 0x100000000, VUL_LLC_SIZE },
     [VUL_MODEL_DRAM_CC2] =     {0x8100000000, VUL_LLC_SIZE },
@@ -140,6 +141,11 @@ static void vul_model_flash_create(RISCVVulModelState *s)
     s->flash = vul_model_flash_create1(s, "vul_model.flash0", "pflash0");
 }
 
+static void vul_model_test_flash_create(RISCVVulModelState *s)
+{
+    s->test_flash = vul_model_flash_create1(s, "vul_model.test_flash0", "test_pflash0");
+}
+
 static void vul_model_flash_map1(PFlashCFI01 *flash,
                                 hwaddr base, hwaddr size,
                                 MemoryRegion *sysmem)
@@ -163,6 +169,15 @@ static void vul_model_flash_map(RISCVVulModelState *s,
     hwaddr flashbase = vul_model_memmap[VUL_MODEL_FLASH].base;
 
     vul_model_flash_map1(s->flash, flashbase, flashsize, sysmem);
+}
+
+static void vul_model_test_flash_map(RISCVVulModelState *s,
+    MemoryRegion *sysmem)
+{
+    hwaddr flashsize = vul_model_memmap[VUL_MODEL_TEST_FLASH].size;
+    hwaddr flashbase = vul_model_memmap[VUL_MODEL_TEST_FLASH].base;
+
+    vul_model_flash_map1(s->test_flash, flashbase, flashsize, sysmem);
 }
 
 static void create_fdt_socket_cpus(RISCVVulModelState *s, int socket,
@@ -710,6 +725,22 @@ static void create_fdt_flash(RISCVVulModelState *s, const MemMapEntry *memmap)
     g_free(name);
 }
 
+static void create_fdt_test_flash(RISCVVulModelState *s, const MemMapEntry *memmap)
+{
+    char *name;
+    MachineState *ms = MACHINE(s);
+    hwaddr flashsize = vul_model_memmap[VUL_MODEL_TEST_FLASH].size;
+    hwaddr flashbase = vul_model_memmap[VUL_MODEL_TEST_FLASH].base;
+
+    name = g_strdup_printf("/flash@%" PRIx64, flashbase);
+    qemu_fdt_add_subnode(ms->fdt, name);
+    qemu_fdt_setprop_string(ms->fdt, name, "compatible", "cfi-flash");
+    qemu_fdt_setprop_sized_cells(ms->fdt, name, "reg",
+                                 2, flashbase, 2, flashsize);
+    qemu_fdt_setprop_cell(ms->fdt, name, "bank-width", 4);
+    g_free(name);
+}
+
 static void finalize_fdt(RISCVVulModelState *s)
 {
     uint32_t phandle = 1, irq_mmio_phandle = 1;
@@ -751,6 +782,7 @@ static void create_fdt(RISCVVulModelState *s, const MemMapEntry *memmap)
                      rng_seed, sizeof(rng_seed));
 
     create_fdt_flash(s, memmap);
+    create_fdt_test_flash(s, memmap);
 
     create_fdt_pmu(s);
 }
@@ -1070,6 +1102,7 @@ static void vul_model_machine_init(MachineState *machine)
                    serial_hd(0), DEVICE_LITTLE_ENDIAN);
 
     vul_model_flash_map(s, system_memory);
+    vul_model_test_flash_map(s, system_memory);
 
     /* load/create device tree */
     if (machine->dtb) {
@@ -1091,6 +1124,7 @@ static void vul_model_machine_instance_init(Object *obj)
     RISCVVulModelState *s = RISCV_VUL_MODEL_MACHINE(obj);
 
     vul_model_flash_create(s);
+    vul_model_test_flash_create(s);
 
     s->fpga_emu_is_server = true;
     s->oem_id = g_strndup(ACPI_BUILD_APPNAME6, 6);
