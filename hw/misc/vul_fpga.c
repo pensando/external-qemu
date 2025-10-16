@@ -2,6 +2,7 @@
 #include "hw/ssi/ssi.h"
 #include "hw/qdev-properties.h"
 #include "hw/misc/vul_fpga.h"
+#include "hw/misc/vul_cpldreg.h"
 
 #define VUL_FPGABUF_BUFFER_SIZE (sizeof(VulFPGABUFRegs) + VUL_FPGABUF_FIFO_SIZE)
 #define LISTENER_BACKLOG 1
@@ -420,6 +421,21 @@ static uint32_t vul_fpga_buffer_write(VulFPGABUF *buffer, uint8_t address, uint8
     return ret;
 }
 
+static int vul_fpga_process_reg_write(VulFPGAState *s)
+{
+    uint8_t addr = s->command.reg.address;
+    s->regs[addr] = s->command.reg.data[0];
+    return 0;
+}
+
+static int vul_fpga_process_reg_read(VulFPGAState *s)
+{
+    uint8_t data;
+    uint8_t addr = s->command.reg.address;
+    data = s->regs[addr];
+    return data;
+}
+
 static uint32_t vul_fpga_process_write(VulFPGAState *s)
 {
     VulFPGABUF *buf;
@@ -432,7 +448,10 @@ static uint32_t vul_fpga_process_write(VulFPGAState *s)
 
     switch(opcode) {
     case VUL_FPGA_OP_REG_WRITE:
+        vul_fpga_process_reg_write(s);
+        break;
     case VUL_FPGA_OP_REG_READ:
+        break;
     case VUL_FPGA_OP_J2C_WRITE:
     case VUL_FPGA_OP_J2C_READ:
     case VUL_FPGA_OP_UART_WRITE:
@@ -474,7 +493,10 @@ static uint32_t vul_fpga_process_read(VulFPGAState *s)
 
     switch(opcode) {
     case VUL_FPGA_OP_REG_WRITE:
+        break;
     case VUL_FPGA_OP_REG_READ:
+        return vul_fpga_process_reg_read(s);
+        break;
     case VUL_FPGA_OP_J2C_WRITE:
     case VUL_FPGA_OP_J2C_READ:
     case VUL_FPGA_OP_UART_WRITE:
@@ -544,7 +566,7 @@ static uint32_t vul_fpga_transfer(SSIPeripheral *ss, uint32_t data)
                 /* Second dummy data, process the command */
                 ret = vul_fpga_process_read(s);
                 ret = ret & 0xFF;
-                if (!vul_fpga_is_read16_address(s->command.fifo.address)) {
+                if (!vul_fpga_is_read16_address(s->command.opcode,s->command.fifo.address)) {
                     /* For non-16-bit read commands, we are done after the second dummy data */
                     dummy_data_count = 0;
                     s->state = VUL_FPGA_CMD_STATE_OPCODE;
@@ -553,7 +575,7 @@ static uint32_t vul_fpga_transfer(SSIPeripheral *ss, uint32_t data)
                 break;
             case 3:
                 /* Third dummy data, only for 16-bit read commands */
-                if (!vul_fpga_is_read16_address(s->command.fifo.address)) {
+                if (!vul_fpga_is_read16_address(s->command.opcode,s->command.fifo.address)) {
                     qemu_log("VulFPGA: Received unexpected third dummy data for non-16-bit read command\n");
                     ret = 0xFFFFFFFF;
                 } else {
@@ -634,6 +656,10 @@ static void vul_fpga_realize(SSIPeripheral *ss, Error **errp)
             }
         }
     }
+
+    /* initialize cpld registers*/
+    memset(s->regs, 0, sizeof(s->regs));
+    cpld_regs_init(s->regs);
 }
 
 static void vul_fpga_unrealize(DeviceState *dev)

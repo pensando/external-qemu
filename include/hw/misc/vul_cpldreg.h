@@ -1,0 +1,154 @@
+#pragma once
+
+#include <stdint.h>
+
+/* cpld register offsets */
+#define CPLD_REG_REV_MAJOR       0x00
+#define CPLD_REG_REV_MINOR       0x01
+#define CPLD_REG_BRD_CTRL0       0x02
+#define CPLD_REG_BRD_CTRL1       0x03
+#define CPLD_REG_BRD_CTRL2       0x04
+#define CPLD_REG_BRD_CTRL3       0x05
+#define CPLD_REG_BRD_CTRL4       0x06
+#define CPLD_REG_INT_EN          0x07
+#define CPLD_REG_INT_STAT        0x08
+#define CPLD_REG_SOC_INT_EN1     0x0B
+#define CPLD_REG_SOC_INT_STAT1   0x0C
+#define CPLD_REG_SLOT_ID         0x0D
+#define CPLD_REG_DPU_CTRL0       0x0E
+#define CPLD_REG_DPU_CTRL1       0x0F
+#define CPLD_REG_DPU_CTRL2       0x10
+#define CPLD_REG_DPU_CTRL3       0x11
+#define CPLD_REG_DPU_STAT0       0x12
+#define CPLD_REG_T_CORE          0x13
+#define CPLD_REG_T_HBM           0x14
+#define CPLD_REG_T_BOARD         0x15
+#define CPLD_REG_T_TH_WARN       0x16
+#define CPLD_REG_T_TH_CRITICAL   0x17
+#define CPLD_REG_T_TH_FATAL      0x18
+#define CPLD_REG_UART_CTRL       0x19
+#define CPLD_REG_J2C_CTRL        0x1A
+#define CPLD_REG_DPU_PIN_STAT0   0x1B
+#define CPLD_REG_DPU_PIN_STAT1   0x1C
+#define CPLD_REG_DPU_PIN_STAT2   0x1D
+#define CPLD_REG_PUF_ERR_LIMIT   0x1E
+#define CPLD_REG_PUF_ERR_CNT     0x1F
+#define CPLD_REG_COREPLL_STAT    0x20
+#define CPLD_REG_CPUPLL_STAT     0x21
+#define CPLD_REG_FLASHPLL_STAT   0x22
+#define CPLD_REG_OTHERPLL_STAT   0x23
+#define CPLD_REG_RESETCODE       0x24
+#define CPLD_REG_RESETCODE_PAST  0x25
+#define CPLD_REG_FAULTCODE       0x26
+#define CPLD_REG_HEALTH_0        0x27
+#define CPLD_REG_HEALTH_1        0x28
+#define CPLD_REG_FW_REVISION0    0x29
+#define CPLD_REG_FW_REVISION1    0x2A
+#define CPLD_REG_FW_REVISION2    0x2B
+#define CPLD_REG_FW_REVISION3    0x2C
+#define CPLD_REG_SCRATHPAD0      0x2D
+#define CPLD_REG_SCRATHPAD1      0x2E
+#define CPLD_REG_SCRATHPAD2      0x2F
+#define CPLD_REG_SCRATHPAD3      0x30
+#define CPLD_REG_SCRATHPAD4      0x31
+#define CPLD_REG_SCRATHPAD5      0x32
+#define CPLD_REG_PERSISTENT_REG0 0x33
+#define CPLD_REG_PERSISTENT_REG1 0x34
+#define CPLD_REG_RESET_REASON0   0x35
+#define CPLD_REG_RESET_REASON1   0x36
+#define CPLD_REG_RESET_REASON2   0x37
+#define CPLD_REG_RESET_REASON3   0x38
+#define CPLD_REG_CPLD_REG_ID     0x40
+#define CPLD_REG_PCB_REV         0x41
+#define CPLD_REG_DATECODE_MIN    0x42
+#define CPLD_REG_DATECODE_HH     0x43
+#define CPLD_REG_DATECODE_DD     0x44
+#define CPLD_REG_DATECODE_MM     0x45
+#define CPLD_REG_DATECODE_YY     0x46
+#define CPLD_REG_WDOG_EN         0x47
+#define CPLD_REG_WDOG_KICKER     0x48
+#define CPLD_REG_RTC_CC          0x49
+#define CPLD_REG_RTC_YEAR        0x4A
+#define CPLD_REG_RTC_MONTH       0x4B
+#define CPLD_REG_RTC_DAY         0x4C
+#define CPLD_REG_RTC_HOUR        0x4D
+#define CPLD_REG_RTC_MIN         0x4E
+#define CPLD_REG_RTC_SEC         0x4F
+#define CPLD_REG_RTC_SS          0x50
+#define CPLD_REG_MAX             0xFF
+
+static inline void cpld_regs_init(uint8_t *regs)
+{
+    regs[CPLD_REG_REV_MAJOR] = 0x1;
+    regs[CPLD_REG_REV_MINOR] = 0x40;
+    regs[CPLD_REG_BRD_CTRL0] = 0;
+    regs[CPLD_REG_BRD_CTRL1] = 0;
+    regs[CPLD_REG_BRD_CTRL2] = 0;
+    regs[CPLD_REG_BRD_CTRL3] = 0;
+    regs[CPLD_REG_BRD_CTRL4] = 0;
+    regs[CPLD_REG_INT_EN] = 0;
+    regs[CPLD_REG_INT_STAT] = 0;
+    regs[CPLD_REG_SOC_INT_EN1] = 0;
+    regs[CPLD_REG_SOC_INT_STAT1] = 0;
+    regs[CPLD_REG_SLOT_ID] = 1;
+    regs[CPLD_REG_DPU_CTRL0] = 0;
+    regs[CPLD_REG_DPU_CTRL1] = 0;
+    regs[CPLD_REG_DPU_CTRL2] = 0;
+    regs[CPLD_REG_DPU_CTRL3] = 0;
+    regs[CPLD_REG_DPU_STAT0] = 0;
+    regs[CPLD_REG_T_CORE] = 0;
+    regs[CPLD_REG_T_HBM] = 0;
+    regs[CPLD_REG_T_BOARD] = 0;
+    regs[CPLD_REG_T_TH_WARN] = 0;
+    regs[CPLD_REG_T_TH_CRITICAL] = 0;
+    regs[CPLD_REG_T_TH_FATAL] = 0;
+    regs[CPLD_REG_UART_CTRL] = 0;
+    regs[CPLD_REG_J2C_CTRL] = 0;
+    regs[CPLD_REG_DPU_PIN_STAT0] = 0;
+    regs[CPLD_REG_DPU_PIN_STAT1] = 0;
+    regs[CPLD_REG_DPU_PIN_STAT2] = 0;
+    regs[CPLD_REG_PUF_ERR_LIMIT] = 0;
+    regs[CPLD_REG_PUF_ERR_CNT] = 0;
+    regs[CPLD_REG_COREPLL_STAT] = 0;
+    regs[CPLD_REG_CPUPLL_STAT] = 0;
+    regs[CPLD_REG_FLASHPLL_STAT] = 0;
+    regs[CPLD_REG_OTHERPLL_STAT] = 0;
+    regs[CPLD_REG_RESETCODE] = 0;
+    regs[CPLD_REG_RESETCODE_PAST] = 0;
+    regs[CPLD_REG_FAULTCODE] = 0;
+    regs[CPLD_REG_HEALTH_0] = 0;
+    regs[CPLD_REG_HEALTH_1] = 0;
+    regs[CPLD_REG_FW_REVISION0] = 0;
+    regs[CPLD_REG_FW_REVISION1] = 0;
+    regs[CPLD_REG_FW_REVISION2] = 0;
+    regs[CPLD_REG_FW_REVISION3] = 0;
+    regs[CPLD_REG_SCRATHPAD0] = 0x10;
+    regs[CPLD_REG_SCRATHPAD1] = 0x11;
+    regs[CPLD_REG_SCRATHPAD2] = 0x12;
+    regs[CPLD_REG_SCRATHPAD3] = 0x13;
+    regs[CPLD_REG_SCRATHPAD4] = 0x14;
+    regs[CPLD_REG_SCRATHPAD5] = 0x15;
+    regs[CPLD_REG_PERSISTENT_REG0] = 0x10;
+    regs[CPLD_REG_PERSISTENT_REG1] = 0x10;
+    regs[CPLD_REG_RESET_REASON0] = 0;
+    regs[CPLD_REG_RESET_REASON1] = 0;
+    regs[CPLD_REG_RESET_REASON2] = 0;
+    regs[CPLD_REG_RESET_REASON3] = 0;
+    regs[CPLD_REG_CPLD_REG_ID] = 0x20;
+    regs[CPLD_REG_PCB_REV] = 0x30;
+    regs[CPLD_REG_DATECODE_MIN] = 0;
+    regs[CPLD_REG_DATECODE_HH] = 0;
+    regs[CPLD_REG_DATECODE_DD] = 0;
+    regs[CPLD_REG_DATECODE_MM] = 0;
+    regs[CPLD_REG_DATECODE_YY] = 0;
+    regs[CPLD_REG_WDOG_EN] = 0;
+    regs[CPLD_REG_WDOG_KICKER] = 0;
+    regs[CPLD_REG_RTC_CC] = 0;
+    regs[CPLD_REG_RTC_YEAR] = 0x25;
+    regs[CPLD_REG_RTC_MONTH] = 0x10;
+    regs[CPLD_REG_RTC_DAY] = 0x15;
+    regs[CPLD_REG_RTC_HOUR] = 0x02;
+    regs[CPLD_REG_RTC_MIN] = 0x16;
+    regs[CPLD_REG_RTC_SEC] = 0x45;
+    regs[CPLD_REG_RTC_SS] = 0x45;
+}

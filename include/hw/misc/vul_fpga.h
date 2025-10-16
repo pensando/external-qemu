@@ -9,9 +9,12 @@
 #include <stdint.h>
 
 #include "hw/misc/vul_fpgabuf.h"
+#include "hw/misc/vul_cpldreg.h"
 
 #define TYPE_VUL_FPGA "vul_fpga"
 OBJECT_DECLARE_SIMPLE_TYPE(VulFPGAState, VUL_FPGA)
+
+#define VUL_FPGA_FRU_SIZE     1024
 
 #define VUL_FPGABUF_FIFO_SIZE 528 // Max size of FPGA buffer
 #define VUL_FPGABUF_MCTP_SIZE 528
@@ -68,15 +71,23 @@ inline static bool vul_fpga_is_read_opcode(uint8_t opcode)
            opcode == VUL_FPGA_OP_RAS_READ;
 }
 
-inline static bool vul_fpga_is_read16_address(uint8_t address)
+inline static bool vul_fpga_is_read16_address(uint8_t opcode, uint8_t address)
 {
+
+    if ((opcode == VUL_FPGA_OP_REG_READ) 
+        || (opcode == VUL_FPGA_OP_FRU_READ)) {
+        return false;
+    }
     return address == VUL_FPGA_REG_ADDR_SIZE ||
            address == VUL_FPGA_REG_ADDR_LENGTH;
 }
 
 inline static bool vul_fpga_is_dummy_data_valid(uint8_t opcode, uint8_t address)
 {
-    if (vul_fpga_is_write_opcode(VUL_FPGA_COMMAND_OPCODE(opcode)) &&
+    if ((opcode == VUL_FPGA_OP_REG_WRITE) || 
+            (opcode == VUL_FPGA_OP_FRU_WRITE)) {
+        return true;
+    } else if (vul_fpga_is_write_opcode(VUL_FPGA_COMMAND_OPCODE(opcode)) &&
         (address == VUL_FPGA_REG_ADDR_CTRL ||
          address == VUL_FPGA_REG_ADDR_DATA)) {
         return true;
@@ -91,6 +102,11 @@ typedef union VulFPGACommand {
         uint8_t address;  /* Register address or buffer offset */
         uint8_t data[];   /* Data to write (for write commands) */
     } __packed__ fifo;
+    struct {
+        uint8_t opcode;   /* VulFPGAOpcodes */
+        uint8_t address;  /* Register address or buffer offset */
+        uint8_t data[];   /* Data to write (for write commands) */
+    } __packed__ reg;
     struct {
         uint8_t opcode;   /* VulFPGAOpcodes */
         uint16_t address; /* Register address or buffer offset */
@@ -118,6 +134,12 @@ typedef struct VulFPGAState {
     VulFPGACommandState state;
 
     bool is_server;
+
+    /* CPLD Registers */
+    uint8_t regs[CPLD_REG_MAX];
+
+    /* FRU Buffer */
+    uint8_t fpgafru[VUL_FPGA_FRU_SIZE];
 
     /* listener */
     char *laddr_str;
