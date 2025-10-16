@@ -1,0 +1,527 @@
+#pragma once
+
+#include <stdint.h>
+
+#define __packed__ __attribute__((__packed__))
+
+/* cpld register offsets */
+#define CPLD_REG_REV_MAJOR           0x00
+#define CPLD_REG_REV_MINOR           0x01
+#define CPLD_REG_BRD_CTRL0           0x02
+#define CPLD_REG_BRD_CTRL1           0x03
+#define CPLD_REG_BRD_CTRL2           0x04
+#define CPLD_REG_BRD_CTRL3           0x05
+#define CPLD_REG_BRD_CTRL4           0x06
+#define CPLD_REG_INT_EN              0x07
+#define CPLD_REG_INT_STAT            0x08
+#define CPLD_REG_SUC_INT_EN1         0x09
+#define CPLD_REG_SUC_INT_STAT1       0x0A
+#define CPLD_REG_SOC_INT_EN1         0x0B
+#define CPLD_REG_SOC_INT_STAT1       0x0C
+#define CPLD_REG_SLOT_ID             0x0D
+#define CPLD_REG_DPU_CTRL0           0x0E
+#define CPLD_REG_DPU_CTRL1           0x0F
+#define CPLD_REG_DPU_CTRL2           0x10
+#define CPLD_REG_DPU_CTRL3           0x11
+#define CPLD_REG_DPU_STAT0           0x12
+#define CPLD_REG_T_CORE              0x13
+#define CPLD_REG_T_HBM               0x14
+#define CPLD_REG_T_BOARD             0x15
+#define CPLD_REG_T_TH_WARN           0x16
+#define CPLD_REG_T_TH_CRITICAL       0x17
+#define CPLD_REG_T_TH_FATAL          0x18
+#define CPLD_REG_UART_CTRL           0x19
+#define CPLD_REG_J2C_CTRL            0x1A
+#define CPLD_REG_DPU_PIN_STAT0       0x1B
+#define CPLD_REG_DPU_PIN_STAT1       0x1C
+#define CPLD_REG_DPU_PIN_STAT2       0x1D
+#define CPLD_REG_PUF_ERR_LIMIT       0x1E
+#define CPLD_REG_PUF_ERR_CNT         0x1F
+#define CPLD_REG_COREPLL_STAT        0x20
+#define CPLD_REG_CPUPLL_STAT         0x21
+#define CPLD_REG_FLASHPLL_STAT       0x22
+#define CPLD_REG_OTHERPLL_STAT       0x23
+#define CPLD_REG_RESETCODE           0x24
+#define CPLD_REG_RESETCODE_PAST      0x25
+#define CPLD_REG_FAULTCODE           0x26
+#define CPLD_REG_HEALTH_0            0x27
+#define CPLD_REG_HEALTH_1            0x28
+#define CPLD_REG_FW_REVISION0        0x29
+#define CPLD_REG_FW_REVISION1        0x2A
+#define CPLD_REG_FW_REVISION2        0x2B
+#define CPLD_REG_FW_REVISION3        0x2C
+#define CPLD_REG_SCRATHPAD0          0x2D
+#define CPLD_REG_SCRATHPAD1          0x2E
+#define CPLD_REG_SCRATHPAD2          0x2F
+#define CPLD_REG_SCRATHPAD3          0x30
+#define CPLD_REG_SCRATHPAD4          0x31
+#define CPLD_REG_SCRATHPAD5          0x32
+#define CPLD_REG_PERSISTENT_REG0     0x33
+#define CPLD_REG_PERSISTENT_REG1     0x34
+#define CPLD_REG_RESET_REASON0       0x35
+#define CPLD_REG_RESET_REASON1       0x36
+#define CPLD_REG_RESET_REASON2       0x37
+#define CPLD_REG_RESET_REASON3       0x38
+#define CPLD_REG_SUC_ATOMIC_ACCESS1  0x39
+#define CPLD_REG_SUC_ATOMIC_ACCESS2  0x3A
+#define CPLD_REG_SUC_ATOMIC_ACCESS3  0x3B
+#define CPLD_REG_SUC_ATOMIC_ACCESS4  0x3C
+#define CPLD_REG_NOT_IMPLEMENTED1    0x3D
+#define CPLD_REG_NOT_IMPLEMENTED2    0x3E
+#define CPLD_REG_NOT_IMPLEMENTED3    0x3F
+#define CPLD_REG_CPLD_REG_ID         0x40
+#define CPLD_REG_PCB_REV             0x41
+#define CPLD_REG_DATECODE_MIN        0x42
+#define CPLD_REG_DATECODE_HH         0x43
+#define CPLD_REG_DATECODE_DD         0x44
+#define CPLD_REG_DATECODE_MM         0x45
+#define CPLD_REG_DATECODE_YY         0x46
+#define CPLD_REG_WDOG_EN             0x47
+#define CPLD_REG_WDOG_KICKER         0x48
+#define CPLD_REG_RTC_CC              0x49
+#define CPLD_REG_RTC_YEAR            0x4A
+#define CPLD_REG_RTC_MONTH           0x4B
+#define CPLD_REG_RTC_DAY             0x4C
+#define CPLD_REG_RTC_HOUR            0x4D
+#define CPLD_REG_RTC_MIN             0x4E
+#define CPLD_REG_RTC_SEC             0x4F
+#define CPLD_REG_RTC_SS              0x50
+#define CPLD_REG_DEBUG0              0x51          
+#define CPLD_REG_DEBUG1              0x52
+#define CPLD_REG_DEBUG2              0x53          
+#define CPLD_REG_DEBUG3              0x54          
+#define CPLD_REG_DEBUG4              0x55          
+#define CPLD_REG_DEBUG5              0x56          
+#define CPLD_REG_DEBUG6              0x57          
+#define CPLD_REG_DEBUG7              0x58          
+#define CPLD_REG_NOT_IMPLEMENTED5    0x59
+#define CPLD_REG_NOT_IMPLEMENTED6    0x5A
+#define CPLD_REG_NOT_IMPLEMENTED7    0x5B
+#define CPLD_REG_JTAG_CTRL           0x5C
+#define CPLD_REG_JTAG_CMDH           0x5D
+#define CPLD_REG_JTAG_CMDL           0x5E
+#define CPLD_REG_JTAG_STAT           0x5F
+#define CPLD_REG_DEBUG_ECOOKIE0      0x60
+#define CPLD_REG_DEBUG_ECOOKIE1      0x61
+#define CPLD_REG_DEBUG_E             0x62
+#define CPLD_REG_MAX                 0x63
+
+typedef enum cpld_access_flags_ {
+    CPLD_SUC_NO_ACCESS = BIT(0),
+    CPLD_SOC_NO_ACCESS = BIT(1),
+    CPLD_SUC_RW_ACCESS = BIT(2),
+    CPLD_SUC_RO_ACCESS = BIT(3),
+    CPLD_SUC_WO_ACCESS = BIT(4),
+    CPLD_SOC_RW_ACCESS = BIT(5),
+    CPLD_SOC_RO_ACCESS = BIT(6),
+    CPLD_SOC_WO_ACCESS = BIT(7),
+    CPLD_SUC_WC_ACCESS = BIT(8),
+    CPLD_SOC_WC_ACCESS = BIT(9),
+} cpld_access_flags;
+
+typedef struct cpld_reg_ {
+    uint8_t off;
+    uint8_t val;
+    cpld_access_flags cpld_access;
+} __packed__ cpld_reg;    
+
+#define VUL_CPLD_REG_SIZE sizeof(cpld_reg)
+
+static inline void cpld_regs_init(cpld_reg *regs)
+{
+    regs[CPLD_REG_REV_MAJOR].off = CPLD_REG_REV_MAJOR;
+    regs[CPLD_REG_REV_MAJOR].cpld_access = CPLD_SUC_RO_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_REV_MAJOR].val = 0x1;
+
+    regs[CPLD_REG_REV_MINOR].off = CPLD_REG_REV_MINOR;
+    regs[CPLD_REG_REV_MINOR].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_REV_MINOR].val = 0x40;
+
+    regs[CPLD_REG_BRD_CTRL0].off = CPLD_REG_BRD_CTRL0;
+    regs[CPLD_REG_BRD_CTRL0].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_BRD_CTRL0].val = 0;
+
+    regs[CPLD_REG_BRD_CTRL1].off = CPLD_REG_BRD_CTRL1;
+    regs[CPLD_REG_BRD_CTRL1].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_BRD_CTRL1].val = 0;
+
+    regs[CPLD_REG_BRD_CTRL2].off = CPLD_REG_BRD_CTRL2;
+    regs[CPLD_REG_BRD_CTRL2].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_BRD_CTRL2].val = 0;
+
+    regs[CPLD_REG_BRD_CTRL3].off = CPLD_REG_BRD_CTRL3;
+    regs[CPLD_REG_BRD_CTRL3].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_BRD_CTRL3].val = 0;
+
+    regs[CPLD_REG_BRD_CTRL4].off = CPLD_REG_BRD_CTRL4;
+    regs[CPLD_REG_BRD_CTRL4].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_BRD_CTRL4].val = 0;
+
+    regs[CPLD_REG_INT_EN].off = CPLD_REG_INT_EN;
+    regs[CPLD_REG_INT_EN].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_INT_EN].val = 0;
+
+    regs[CPLD_REG_INT_STAT].off = CPLD_REG_INT_STAT;
+    regs[CPLD_REG_INT_STAT].cpld_access = CPLD_SUC_RO_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_INT_STAT].val = 0;
+
+    regs[CPLD_REG_SUC_INT_EN1].off = CPLD_REG_SUC_INT_EN1;
+    regs[CPLD_REG_SUC_INT_EN1].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_NO_ACCESS;
+    regs[CPLD_REG_SUC_INT_EN1].val = 0;
+
+    regs[CPLD_REG_SUC_INT_STAT1].off = CPLD_REG_SUC_INT_STAT1;
+    regs[CPLD_REG_SUC_INT_STAT1].cpld_access = CPLD_SUC_RO_ACCESS | CPLD_SOC_NO_ACCESS;
+    regs[CPLD_REG_SUC_INT_STAT1].val = 0;
+
+    regs[CPLD_REG_SOC_INT_EN1].off = CPLD_REG_SOC_INT_EN1;
+    regs[CPLD_REG_SOC_INT_EN1].cpld_access = CPLD_SUC_NO_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_SOC_INT_EN1].val = 0;
+
+    regs[CPLD_REG_SOC_INT_STAT1].off = CPLD_REG_SOC_INT_STAT1;
+    regs[CPLD_REG_SOC_INT_STAT1].cpld_access = CPLD_SUC_NO_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_SOC_INT_STAT1].val = 0;
+
+    regs[CPLD_REG_SLOT_ID].off = CPLD_REG_SLOT_ID;
+    regs[CPLD_REG_SLOT_ID].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_SLOT_ID].val = 0;
+
+    regs[CPLD_REG_DPU_CTRL0].off = CPLD_REG_DPU_CTRL0;
+    regs[CPLD_REG_DPU_CTRL0].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_DPU_CTRL0].val = 0;
+
+    regs[CPLD_REG_DPU_CTRL1].off = CPLD_REG_DPU_CTRL1;
+    regs[CPLD_REG_DPU_CTRL1].cpld_access = CPLD_SUC_RO_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_DPU_CTRL1].val = 0;
+
+    regs[CPLD_REG_DPU_CTRL2].off = CPLD_REG_DPU_CTRL2;
+    regs[CPLD_REG_DPU_CTRL2].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_DPU_CTRL2].val = 0;
+
+    regs[CPLD_REG_DPU_CTRL3].off = CPLD_REG_DPU_CTRL3;
+    regs[CPLD_REG_DPU_CTRL3].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_DPU_CTRL3].val = 0;
+
+    regs[CPLD_REG_DPU_STAT0].off = CPLD_REG_DPU_STAT0;
+    regs[CPLD_REG_DPU_STAT0].cpld_access = CPLD_SUC_RO_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_DPU_STAT0].val = 0;
+
+    regs[CPLD_REG_T_CORE].off = CPLD_REG_T_CORE;
+    regs[CPLD_REG_T_CORE].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_T_CORE].val = 0;
+
+    regs[CPLD_REG_T_HBM].off = CPLD_REG_T_HBM;
+    regs[CPLD_REG_T_HBM].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_T_HBM].val = 0;
+
+    regs[CPLD_REG_T_BOARD].off = CPLD_REG_T_BOARD;
+    regs[CPLD_REG_T_BOARD].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_T_BOARD].val = 0;
+
+    regs[CPLD_REG_T_TH_WARN].off = CPLD_REG_T_TH_WARN;
+    regs[CPLD_REG_T_TH_WARN].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_T_TH_WARN].val = 0;
+
+    regs[CPLD_REG_T_TH_CRITICAL].off = CPLD_REG_T_TH_CRITICAL;
+    regs[CPLD_REG_T_TH_CRITICAL].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_T_TH_CRITICAL].val = 0;
+
+    regs[CPLD_REG_T_TH_FATAL].off = CPLD_REG_T_TH_FATAL;
+    regs[CPLD_REG_T_TH_FATAL].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_T_TH_FATAL].val = 0;
+
+    regs[CPLD_REG_UART_CTRL].off = CPLD_REG_UART_CTRL;
+    regs[CPLD_REG_UART_CTRL].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_UART_CTRL].val = 0;
+
+    regs[CPLD_REG_J2C_CTRL].off = CPLD_REG_J2C_CTRL;
+    regs[CPLD_REG_J2C_CTRL].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_J2C_CTRL].val = 0;
+
+    regs[CPLD_REG_DPU_PIN_STAT0].off = CPLD_REG_DPU_PIN_STAT0;
+    regs[CPLD_REG_DPU_PIN_STAT0].cpld_access = CPLD_SUC_RO_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_DPU_PIN_STAT0].val = 0;
+
+    regs[CPLD_REG_DPU_PIN_STAT1].off = CPLD_REG_DPU_PIN_STAT1;
+    regs[CPLD_REG_DPU_PIN_STAT1].cpld_access = CPLD_SUC_RO_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_DPU_PIN_STAT1].val = 0;
+
+    regs[CPLD_REG_DPU_PIN_STAT2].off = CPLD_REG_DPU_PIN_STAT2;
+    regs[CPLD_REG_DPU_PIN_STAT2].cpld_access = CPLD_SUC_RO_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_DPU_PIN_STAT2].val = 0;
+
+    regs[CPLD_REG_PUF_ERR_LIMIT].off = CPLD_REG_PUF_ERR_LIMIT;
+    regs[CPLD_REG_PUF_ERR_LIMIT].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_PUF_ERR_LIMIT].val = 0;
+
+    regs[CPLD_REG_PUF_ERR_CNT].off = CPLD_REG_PUF_ERR_CNT;
+    regs[CPLD_REG_PUF_ERR_CNT].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_PUF_ERR_CNT].val = 0;
+
+    regs[CPLD_REG_COREPLL_STAT].off = CPLD_REG_COREPLL_STAT;
+    regs[CPLD_REG_COREPLL_STAT].cpld_access = CPLD_SUC_RO_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_COREPLL_STAT].val = 0;
+
+    regs[CPLD_REG_CPUPLL_STAT].off = CPLD_REG_CPUPLL_STAT;
+    regs[CPLD_REG_CPUPLL_STAT].cpld_access = CPLD_SUC_RO_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_CPUPLL_STAT].val = 0;
+
+    regs[CPLD_REG_FLASHPLL_STAT].off = CPLD_REG_FLASHPLL_STAT;
+    regs[CPLD_REG_FLASHPLL_STAT].cpld_access = CPLD_SUC_RO_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_FLASHPLL_STAT].val = 0;
+
+    regs[CPLD_REG_OTHERPLL_STAT].off = CPLD_REG_OTHERPLL_STAT;
+    regs[CPLD_REG_OTHERPLL_STAT].cpld_access = CPLD_SUC_RO_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_OTHERPLL_STAT].val = 0;
+
+    regs[CPLD_REG_RESETCODE].off = CPLD_REG_RESETCODE;
+    regs[CPLD_REG_RESETCODE].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS | CPLD_SUC_WC_ACCESS | CPLD_SOC_WC_ACCESS;
+    regs[CPLD_REG_RESETCODE].val = 0;
+
+    regs[CPLD_REG_RESETCODE_PAST].off = CPLD_REG_RESETCODE_PAST;
+    regs[CPLD_REG_RESETCODE_PAST].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS | CPLD_SUC_WC_ACCESS | CPLD_SOC_WC_ACCESS;
+    regs[CPLD_REG_RESETCODE_PAST].val = 0;
+
+    regs[CPLD_REG_FAULTCODE].off = CPLD_REG_FAULTCODE;
+    regs[CPLD_REG_FAULTCODE].cpld_access = CPLD_SUC_RO_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_FAULTCODE].val = 0;
+
+    regs[CPLD_REG_HEALTH_0].off = CPLD_REG_HEALTH_0;
+    regs[CPLD_REG_HEALTH_0].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_HEALTH_0].val = 0;
+
+    regs[CPLD_REG_HEALTH_1].off = CPLD_REG_HEALTH_1;
+    regs[CPLD_REG_HEALTH_1].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_HEALTH_1].val = 0;
+
+    regs[CPLD_REG_FW_REVISION0].off = CPLD_REG_FW_REVISION0;
+    regs[CPLD_REG_FW_REVISION0].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_FW_REVISION0].val = 0;
+
+    regs[CPLD_REG_FW_REVISION1].off = CPLD_REG_FW_REVISION1;
+    regs[CPLD_REG_FW_REVISION1].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_FW_REVISION1].val = 0;
+
+    regs[CPLD_REG_FW_REVISION2].off = CPLD_REG_FW_REVISION2;
+    regs[CPLD_REG_FW_REVISION2].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_FW_REVISION2].val = 0;
+
+    regs[CPLD_REG_FW_REVISION3].off = CPLD_REG_FW_REVISION3;
+    regs[CPLD_REG_FW_REVISION3].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_FW_REVISION3].val = 0;
+
+    regs[CPLD_REG_SCRATHPAD0].off = CPLD_REG_SCRATHPAD0;
+    regs[CPLD_REG_SCRATHPAD0].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_SCRATHPAD0].val = 0x10;
+
+    regs[CPLD_REG_SCRATHPAD1].off = CPLD_REG_SCRATHPAD1;
+    regs[CPLD_REG_SCRATHPAD1].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_SCRATHPAD1].val = 0x11;
+
+    regs[CPLD_REG_SCRATHPAD2].off = CPLD_REG_SCRATHPAD2;
+    regs[CPLD_REG_SCRATHPAD2].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_SCRATHPAD2].val = 0x12;
+
+    regs[CPLD_REG_SCRATHPAD3].off = CPLD_REG_SCRATHPAD3;
+    regs[CPLD_REG_SCRATHPAD3].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_SCRATHPAD3].val = 0x13;
+
+    regs[CPLD_REG_SCRATHPAD4].off = CPLD_REG_SCRATHPAD4;
+    regs[CPLD_REG_SCRATHPAD4].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_SCRATHPAD4].val = 0x14;
+
+    regs[CPLD_REG_SCRATHPAD5].off = CPLD_REG_SCRATHPAD5;
+    regs[CPLD_REG_SCRATHPAD5].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_SCRATHPAD5].val = 0x15;
+
+    regs[CPLD_REG_PERSISTENT_REG0].off = CPLD_REG_PERSISTENT_REG0;
+    regs[CPLD_REG_PERSISTENT_REG0].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_PERSISTENT_REG0].val = 0x10;
+
+    regs[CPLD_REG_PERSISTENT_REG1].off = CPLD_REG_PERSISTENT_REG1;
+    regs[CPLD_REG_PERSISTENT_REG1].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_PERSISTENT_REG1].val = 0x10;
+
+    regs[CPLD_REG_RESET_REASON0].off = CPLD_REG_RESET_REASON0;
+    regs[CPLD_REG_RESET_REASON0].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS | CPLD_SUC_WC_ACCESS | CPLD_SOC_WC_ACCESS;
+    regs[CPLD_REG_RESET_REASON0].val = 0;
+
+    regs[CPLD_REG_RESET_REASON1].off = CPLD_REG_RESET_REASON1;
+    regs[CPLD_REG_RESET_REASON1].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS | CPLD_SUC_WC_ACCESS | CPLD_SOC_WC_ACCESS;
+    regs[CPLD_REG_RESET_REASON1].val = 0;
+
+    regs[CPLD_REG_RESET_REASON2].off = CPLD_REG_RESET_REASON2;
+    regs[CPLD_REG_RESET_REASON2].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS | CPLD_SUC_WC_ACCESS | CPLD_SOC_WC_ACCESS;
+    regs[CPLD_REG_RESET_REASON2].val = 0;
+
+    regs[CPLD_REG_RESET_REASON3].off = CPLD_REG_RESET_REASON3;
+    regs[CPLD_REG_RESET_REASON3].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS | CPLD_SUC_WC_ACCESS | CPLD_SOC_WC_ACCESS;
+    regs[CPLD_REG_RESET_REASON3].val = 0;
+
+    regs[CPLD_REG_SUC_ATOMIC_ACCESS1].off = CPLD_REG_SUC_ATOMIC_ACCESS1;
+    regs[CPLD_REG_SUC_ATOMIC_ACCESS1].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_SUC_ATOMIC_ACCESS1].val = 0;
+
+    regs[CPLD_REG_SUC_ATOMIC_ACCESS2].off = CPLD_REG_SUC_ATOMIC_ACCESS2;
+    regs[CPLD_REG_SUC_ATOMIC_ACCESS2].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_SUC_ATOMIC_ACCESS2].val = 0;
+
+    regs[CPLD_REG_SUC_ATOMIC_ACCESS3].off = CPLD_REG_SUC_ATOMIC_ACCESS3;
+    regs[CPLD_REG_SUC_ATOMIC_ACCESS3].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_SUC_ATOMIC_ACCESS3].val = 0;
+
+    regs[CPLD_REG_SUC_ATOMIC_ACCESS4].off = CPLD_REG_SUC_ATOMIC_ACCESS4;
+    regs[CPLD_REG_SUC_ATOMIC_ACCESS4].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_SUC_ATOMIC_ACCESS4].val = 0;
+
+    regs[CPLD_REG_NOT_IMPLEMENTED1].off = CPLD_REG_NOT_IMPLEMENTED1;
+    regs[CPLD_REG_NOT_IMPLEMENTED1].cpld_access = CPLD_SUC_NO_ACCESS | CPLD_SOC_NO_ACCESS;
+    regs[CPLD_REG_NOT_IMPLEMENTED1].val = 0;
+
+    regs[CPLD_REG_NOT_IMPLEMENTED2].off = CPLD_REG_NOT_IMPLEMENTED2;
+    regs[CPLD_REG_NOT_IMPLEMENTED2].cpld_access = CPLD_SUC_NO_ACCESS | CPLD_SOC_NO_ACCESS;
+    regs[CPLD_REG_NOT_IMPLEMENTED2].val = 0;
+
+    regs[CPLD_REG_NOT_IMPLEMENTED3].off = CPLD_REG_NOT_IMPLEMENTED3;
+    regs[CPLD_REG_NOT_IMPLEMENTED3].cpld_access = CPLD_SUC_NO_ACCESS | CPLD_SOC_NO_ACCESS;
+    regs[CPLD_REG_NOT_IMPLEMENTED3].val = 0;
+
+    regs[CPLD_REG_CPLD_REG_ID].off = CPLD_REG_CPLD_REG_ID;
+    regs[CPLD_REG_CPLD_REG_ID].cpld_access = CPLD_SUC_RO_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_CPLD_REG_ID].val = 0x20;
+
+    regs[CPLD_REG_PCB_REV].off = CPLD_REG_PCB_REV;
+    regs[CPLD_REG_PCB_REV].cpld_access = CPLD_SUC_RO_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_PCB_REV].val = 0x30;
+
+    regs[CPLD_REG_DATECODE_MIN].off = CPLD_REG_DATECODE_MIN;
+    regs[CPLD_REG_DATECODE_MIN].cpld_access = CPLD_SUC_RO_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_DATECODE_MIN].val = 0;
+
+    regs[CPLD_REG_DATECODE_HH].off = CPLD_REG_DATECODE_HH;
+    regs[CPLD_REG_DATECODE_HH].cpld_access = CPLD_SUC_RO_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_DATECODE_HH].val = 0;
+
+    regs[CPLD_REG_DATECODE_DD].off = CPLD_REG_DATECODE_DD;
+    regs[CPLD_REG_DATECODE_DD].cpld_access = CPLD_SUC_RO_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_DATECODE_DD].val = 0;
+
+    regs[CPLD_REG_DATECODE_MM].off = CPLD_REG_DATECODE_MM;
+    regs[CPLD_REG_DATECODE_MM].cpld_access = CPLD_SUC_RO_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_DATECODE_MM].val = 0;
+
+    regs[CPLD_REG_DATECODE_YY].off = CPLD_REG_DATECODE_YY;
+    regs[CPLD_REG_DATECODE_YY].cpld_access = CPLD_SUC_RO_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_DATECODE_YY].val = 0;
+
+    regs[CPLD_REG_WDOG_EN].off = CPLD_REG_WDOG_EN;
+    regs[CPLD_REG_WDOG_EN].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_WDOG_EN].val = 0;
+
+    regs[CPLD_REG_WDOG_KICKER].off = CPLD_REG_WDOG_KICKER;
+    regs[CPLD_REG_WDOG_KICKER].cpld_access = CPLD_SUC_RW_ACCESS;
+    regs[CPLD_REG_WDOG_KICKER].val = 0;
+
+    regs[CPLD_REG_RTC_CC].off = CPLD_REG_RTC_CC;
+    regs[CPLD_REG_RTC_CC].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_RTC_CC].val = 0;
+
+    regs[CPLD_REG_RTC_YEAR].off = CPLD_REG_RTC_YEAR;
+    regs[CPLD_REG_RTC_YEAR].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_RTC_YEAR].val = 0x25;
+
+    regs[CPLD_REG_RTC_MONTH].off = CPLD_REG_RTC_MONTH;
+    regs[CPLD_REG_RTC_MONTH].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_RTC_MONTH].val = 0x10;
+
+    regs[CPLD_REG_RTC_DAY].off = CPLD_REG_RTC_DAY;
+    regs[CPLD_REG_RTC_DAY].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_RTC_DAY].val = 0x15;
+
+    regs[CPLD_REG_RTC_HOUR].off = CPLD_REG_RTC_HOUR;
+    regs[CPLD_REG_RTC_HOUR].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_RTC_HOUR].val = 0x02;
+
+    regs[CPLD_REG_RTC_MIN].off = CPLD_REG_RTC_MIN;
+    regs[CPLD_REG_RTC_MIN].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_RTC_MIN].val = 0x16;
+
+    regs[CPLD_REG_RTC_SEC].off = CPLD_REG_RTC_SEC;
+    regs[CPLD_REG_RTC_SEC].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_RTC_SEC].val = 0x45;
+
+    regs[CPLD_REG_RTC_SS].off = CPLD_REG_RTC_SS;
+    regs[CPLD_REG_RTC_SS].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_RTC_SS].val = 0x45;
+
+    regs[CPLD_REG_DEBUG0].off = CPLD_REG_DEBUG0;
+    regs[CPLD_REG_DEBUG0].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_DEBUG0].val = 0;
+
+    regs[CPLD_REG_DEBUG1].off = CPLD_REG_DEBUG1;
+    regs[CPLD_REG_DEBUG1].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_DEBUG1].val = 0;
+
+    regs[CPLD_REG_DEBUG2].off = CPLD_REG_DEBUG2;
+    regs[CPLD_REG_DEBUG2].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_DEBUG2].val = 0;
+
+    regs[CPLD_REG_DEBUG3].off = CPLD_REG_DEBUG3;
+    regs[CPLD_REG_DEBUG3].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_DEBUG3].val = 0;
+
+    regs[CPLD_REG_DEBUG4].off = CPLD_REG_DEBUG4;
+    regs[CPLD_REG_DEBUG4].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_DEBUG4].val = 0;
+
+    regs[CPLD_REG_DEBUG5].off = CPLD_REG_DEBUG5;
+    regs[CPLD_REG_DEBUG5].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_DEBUG5].val = 0;
+
+    regs[CPLD_REG_DEBUG6].off = CPLD_REG_DEBUG6;
+    regs[CPLD_REG_DEBUG6].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_DEBUG6].val = 0;
+
+    regs[CPLD_REG_DEBUG7].off = CPLD_REG_DEBUG7;
+    regs[CPLD_REG_DEBUG7].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_DEBUG7].val = 0;
+
+    regs[CPLD_REG_NOT_IMPLEMENTED5].off = CPLD_REG_NOT_IMPLEMENTED5;
+    regs[CPLD_REG_NOT_IMPLEMENTED5].cpld_access =  CPLD_SUC_NO_ACCESS | CPLD_SOC_NO_ACCESS;
+    regs[CPLD_REG_NOT_IMPLEMENTED5].val = 0;
+
+    regs[CPLD_REG_NOT_IMPLEMENTED6].off = CPLD_REG_NOT_IMPLEMENTED6;
+    regs[CPLD_REG_NOT_IMPLEMENTED6].cpld_access =  CPLD_SUC_NO_ACCESS | CPLD_SOC_NO_ACCESS;
+    regs[CPLD_REG_NOT_IMPLEMENTED6].val = 0;
+
+    regs[CPLD_REG_NOT_IMPLEMENTED7].off = CPLD_REG_NOT_IMPLEMENTED7;
+    regs[CPLD_REG_NOT_IMPLEMENTED7].cpld_access =  CPLD_SUC_NO_ACCESS | CPLD_SOC_NO_ACCESS;
+    regs[CPLD_REG_NOT_IMPLEMENTED7].val = 0;
+
+    regs[CPLD_REG_JTAG_CTRL].off = CPLD_REG_JTAG_CTRL;
+    regs[CPLD_REG_JTAG_CTRL].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_JTAG_CTRL].val = 0;
+
+    regs[CPLD_REG_JTAG_CMDH].off = CPLD_REG_JTAG_CMDH;
+    regs[CPLD_REG_JTAG_CMDH].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_JTAG_CMDH].val = 0;
+
+    regs[CPLD_REG_JTAG_CMDL].off = CPLD_REG_JTAG_CMDL;
+    regs[CPLD_REG_JTAG_CMDL].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RW_ACCESS;
+    regs[CPLD_REG_JTAG_CMDL].val = 0;
+
+    regs[CPLD_REG_JTAG_STAT].off = CPLD_REG_JTAG_STAT;
+    regs[CPLD_REG_JTAG_STAT].cpld_access = CPLD_SUC_RO_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_JTAG_STAT].val = 0;
+
+    regs[CPLD_REG_DEBUG_ECOOKIE0].off = CPLD_REG_DEBUG_ECOOKIE0;
+    regs[CPLD_REG_DEBUG_ECOOKIE0].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_DEBUG_ECOOKIE0].val = 0;
+
+    regs[CPLD_REG_DEBUG_ECOOKIE1].off = CPLD_REG_DEBUG_ECOOKIE1;
+    regs[CPLD_REG_DEBUG_ECOOKIE1].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_DEBUG_ECOOKIE1].val = 0;
+
+    regs[CPLD_REG_DEBUG_E].off = CPLD_REG_DEBUG_E;
+    regs[CPLD_REG_DEBUG_E].cpld_access = CPLD_SUC_RW_ACCESS | CPLD_SOC_RO_ACCESS;
+    regs[CPLD_REG_DEBUG_E].val = 0;
+}

@@ -64,6 +64,7 @@ struct RISCVVulModelState {
     char *mctp_emu_sock;
     char *fpga_emu_sock;
     bool fpga_emu_is_server;
+    bool is_soc;
     RISCVVulModelAIAType aia_type;
     int aia_guests;
     char *oem_id;

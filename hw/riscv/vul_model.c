@@ -929,7 +929,7 @@ static void add_memory_aliasing(RISCVVulModelState *s, MemoryRegion *orig_region
     vul_mem_add_alias(s->vul_mem, entry->base, system_memory);
 }
 
-static SiFiveSPIState *sifive_spi0_create(hwaddr addr, char *sock, bool is_server)
+static SiFiveSPIState *sifive_spi0_create(hwaddr addr, char *sock, bool is_server, bool is_soc)
 {
     SiFiveSPIState *spi0;
 
@@ -940,7 +940,7 @@ static SiFiveSPIState *sifive_spi0_create(hwaddr addr, char *sock, bool is_serve
     spi0 = SIFIVE_SPI(dev);
 
     // Create tcp-ssi device and connect to spi0 bus
-    DeviceState *fpga_dev = vul_fpga_create(sock, is_server);
+    DeviceState *fpga_dev = vul_fpga_create(sock, is_server, is_soc);
     qdev_prop_set_uint8(fpga_dev, "cs", 0);
     qdev_realize_and_unref(fpga_dev, BUS(spi0->spi), &error_fatal);
 
@@ -1092,7 +1092,7 @@ static void vul_model_machine_init(MachineState *machine)
     sifive_test_create(memmap[VUL_MODEL_TEST].base);
 
     /* Create SPI0 device and populate its peripherals */
-    s->spi0 = sifive_spi0_create(memmap[VUL_MODEL_SPI0].base, s->fpga_emu_sock, s->fpga_emu_is_server);
+    s->spi0 = sifive_spi0_create(memmap[VUL_MODEL_SPI0].base, s->fpga_emu_sock, s->fpga_emu_is_server, s->is_soc);
 
     serial_mm_init(system_memory, memmap[VUL_MODEL_UART0].base,
                    VUL_MODEL_UART0_REG_SHIFT, qdev_get_gpio_in(mmio_irqchip, UART0_IRQ), 399193,
@@ -1124,6 +1124,7 @@ static void vul_model_machine_instance_init(Object *obj)
     vul_model_test_flash_create(s);
 
     s->fpga_emu_is_server = true;
+    s->is_soc = true;
     s->oem_id = g_strndup(ACPI_BUILD_APPNAME6, 6);
     s->oem_table_id = g_strndup(ACPI_BUILD_APPNAME8, 8);
     s->acpi = ON_OFF_AUTO_AUTO;
@@ -1210,6 +1211,25 @@ static void vul_model_set_fpga_emu_conf(Object *obj, const char *val, Error **er
     s->fpga_emu_sock = g_strdup(val);
 }
 
+static void vul_model_set_machine_type_conf(Object *obj, const char *val, Error **errp)
+{
+    RISCVVulModelState *s = RISCV_VUL_MODEL_MACHINE(obj);
+
+    if (!val) {
+        // no fpga-emu-mode is specified, use default as server
+        s->is_soc = true;
+    }
+
+    if (g_ascii_strcasecmp(val, "suc") == 0) {
+        s->is_soc = false;
+    } else if (g_ascii_strcasecmp(val, "soc") == 0) {
+        s->is_soc = true;
+    } else {
+        error_setg(errp, "Invalid FPGA emulation type");
+        error_append_hint(errp, "Valid values are 'soc' or 'suc'.\n");
+    }
+}
+
 static void vul_model_set_fpga_emu_mode_conf(Object *obj, const char *val, Error **errp)
 {
     RISCVVulModelState *s = RISCV_VUL_MODEL_MACHINE(obj);
@@ -1274,6 +1294,10 @@ static void vul_model_machine_class_init(ObjectClass *oc, void *data)
     object_class_property_add_str(oc, "fpga-emu-mode", NULL, vul_model_set_fpga_emu_mode_conf);
     object_class_property_set_description(oc, "fpga-emu-mode",
                                           "The FPGA emulation mode, either 'client' or 'server'.");
+
+    object_class_property_add_str(oc, "machine-type", NULL, vul_model_set_machine_type_conf);
+    object_class_property_set_description(oc, "machine-type",
+                                          "The vulcano type, either suc or soc.");
 }
 
 static const TypeInfo vul_model_machine_typeinfo = {
