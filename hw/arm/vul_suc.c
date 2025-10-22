@@ -7,6 +7,7 @@
  * This code is licensed under the GPL.
  */
 
+#include "qemu/units.h"
 #include "qemu/osdep.h"
 #include "qapi/error.h"
 #include "hw/core/split-irq.h"
@@ -34,6 +35,7 @@
 #include "qom/object.h"
 #include "qobject/qlist.h"
 #include "ui/input.h"
+#include "hw/block/flash.h"
 
 #define GPIO_A 0
 #define GPIO_B 1
@@ -48,6 +50,7 @@
 #define BP_GAMEPAD   0x04
 
 #define NUM_IRQ_LINES 64
+#define VUL_SUC_FLASH_SECTOR_SIZE (4 * KiB)
 
 typedef const struct {
     const char *name;
@@ -102,6 +105,7 @@ struct VulSucMachineState {
         char *sock_addr;
         DeviceState *sockdma_dev;
     } sockdmas[ARRAY_SIZE(sockdma_infos)];
+    PFlashCFI01 *suc_flash;
 };
 
 /* System controller.  */
@@ -1008,6 +1012,49 @@ static vul_suc_board_info vul_suc_boards[] = {
   }
 };
 
+static PFlashCFI01 *vul_suc_flash_create1(VulSucMachineState *s,
+                                          const char *name,
+                                          const char *alias_prop_name)
+{
+    DeviceState *dev = qdev_new(TYPE_PFLASH_CFI01);
+
+    qdev_prop_set_uint64(dev, "sector-length", VUL_SUC_FLASH_SECTOR_SIZE);
+    qdev_prop_set_uint8(dev, "width", 4);
+    qdev_prop_set_uint8(dev, "device-width", 4);
+    qdev_prop_set_bit(dev, "big-endian", false);
+    qdev_prop_set_uint16(dev, "id0", 0x89);
+    qdev_prop_set_uint16(dev, "id1", 0x18);
+    qdev_prop_set_uint16(dev, "id2", 0x00);
+    qdev_prop_set_uint16(dev, "id3", 0x00);
+    qdev_prop_set_string(dev, "name", name);
+
+    object_property_add_child(OBJECT(s), name, OBJECT(dev));
+    object_property_add_alias(OBJECT(s), alias_prop_name,
+                              OBJECT(dev), "drive");
+
+    return PFLASH_CFI01(dev);
+}
+
+static void vul_suc_flash_create(VulSucMachineState *s)
+{
+    s->suc_flash = vul_suc_flash_create1(s, "vul_suc.flash1", "pflash1");
+}
+
+static void vul_suc_flash_map1(PFlashCFI01 *flash,
+                               hwaddr base, hwaddr size,
+                               MemoryRegion *sysmem)
+{
+    DeviceState *dev = DEVICE(flash);
+
+    assert(QEMU_IS_ALIGNED(size, VUL_SUC_FLASH_SECTOR_SIZE));
+    assert(size / VUL_SUC_FLASH_SECTOR_SIZE <= UINT32_MAX);
+    qdev_prop_set_uint32(dev, "num-blocks", size / VUL_SUC_FLASH_SECTOR_SIZE);
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+
+    memory_region_add_subregion(sysmem, base,
+                                sysbus_mmio_get_region(SYS_BUS_DEVICE(dev), 0));
+}
+
 static void vul_suc_init_board(MachineState *ms, vul_suc_board_info *board)
 {
     static const int uart_irq[] = {5, 6, 33, 34};
@@ -1387,6 +1434,10 @@ static void vul_suc_init(MachineState *machine)
                                                     s->sockdmas[i].sock_addr);
     }
 
+    MemoryRegion *system_memory = get_system_memory();
+
+    vul_suc_flash_map1(s->suc_flash, 0x60000000, 0x1000000, system_memory);
+
     vul_suc_init_board(machine, &vul_suc_boards[0]);
 }
 
@@ -1408,10 +1459,17 @@ static void vul_suc_class_init(ObjectClass *oc, const void *data)
     }
 }
 
+static void vul_suc_instance_init(Object *obj)
+{
+    VulSucMachineState *s = VUL_SUC_MACHINE(obj);
+    vul_suc_flash_create(s);
+}
+
 static const TypeInfo vul_suc_type = {
     .name = TYPE_VUL_SUC_MACHINE,
     .parent = TYPE_MACHINE,
     .instance_size = sizeof(VulSucMachineState),
+    .instance_init = vul_suc_instance_init,
     .class_init = vul_suc_class_init,
 };
 
