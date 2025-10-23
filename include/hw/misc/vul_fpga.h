@@ -16,7 +16,6 @@ OBJECT_DECLARE_SIMPLE_TYPE(VulFPGAState, VUL_FPGA)
 #define VUL_FPGABUF_FIFO_SIZE 528 // Max size of FPGA buffer
 #define VUL_FPGABUF_MCTP_SIZE 528
 #define VUL_FPGABUF_CMD_SIZE  528
-#define VUL_FPGA_MAX_COMMAND_SIZE (sizeof(uint8_t) + sizeof(uint16_t) + VUL_FPGABUF_FIFO_SIZE)
 
 typedef enum VulFPGAOpcodes {
     VUL_FPGA_OP_READ_IRQ = 0,
@@ -68,13 +67,13 @@ inline static bool vul_fpga_is_read_opcode(uint8_t opcode)
            opcode == VUL_FPGA_OP_RAS_READ;
 }
 
-inline static bool vul_fpga_is_read16_address(uint8_t address)
+inline static bool vul_fpga_is_read16_address(uint16_t address)
 {
     return address == VUL_FPGA_REG_ADDR_SIZE ||
            address == VUL_FPGA_REG_ADDR_LENGTH;
 }
 
-inline static bool vul_fpga_is_dummy_data_valid(uint8_t opcode, uint8_t address)
+inline static bool vul_fpga_is_dummy_data_valid(uint8_t opcode, uint16_t address)
 {
     if (vul_fpga_is_write_opcode(VUL_FPGA_COMMAND_OPCODE(opcode)) &&
         (address == VUL_FPGA_REG_ADDR_CTRL ||
@@ -84,20 +83,20 @@ inline static bool vul_fpga_is_dummy_data_valid(uint8_t opcode, uint8_t address)
     return false;
 }
 
-typedef union VulFPGACommand {
+inline static bool vul_fpga_fifo_command(uint8_t opcode)
+{
+    return opcode == VUL_FPGA_OP_MCTP_WRITE ||
+           opcode == VUL_FPGA_OP_MCTP_READ ||
+           opcode == VUL_FPGA_OP_CMD_WRITE ||
+           opcode == VUL_FPGA_OP_CMD_READ;
+}
+
+typedef struct VulFPGACommand {
     uint8_t opcode; /* VulFPGAOpcodes */
-    struct {
-        uint8_t opcode;   /* VulFPGAOpcodes */
-        uint8_t address;  /* Register address or buffer offset */
-        uint8_t data[];   /* Data to write (for write commands) */
-    } __packed__ fifo;
-    struct {
-        uint8_t opcode;   /* VulFPGAOpcodes */
-        uint16_t address; /* Register address or buffer offset */
-        uint8_t data[];   /* Data to write (for write commands) */
-    } __packed__ dpr;
-    uint8_t raw[VUL_FPGA_MAX_COMMAND_SIZE];
-} __packed__ VulFPGACommand;
+    uint16_t address;
+    uint8_t data;
+    uint32_t dummy_data_count;
+} VulFPGACommand;
 
 typedef enum VulFPGACommandState {
     VUL_FPGA_CMD_STATE_OPCODE,

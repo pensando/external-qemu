@@ -423,7 +423,7 @@ static uint32_t vul_fpga_buffer_write(VulFPGABUF *buffer, uint8_t address, uint8
 static uint32_t vul_fpga_process_write(VulFPGAState *s)
 {
     VulFPGABUF *buf;
-    uint8_t address = s->command.fifo.address;
+    uint16_t address = s->command.address;
     uint8_t opcode = VUL_FPGA_COMMAND_OPCODE(s->command.opcode);
     if (opcode >= VUL_FPGA_OP_MAX) {
         qemu_log("VulFPGA: Invalid command opcode: 0x%02X\n", opcode);
@@ -453,7 +453,7 @@ static uint32_t vul_fpga_process_write(VulFPGAState *s)
             qemu_log("VulFPGA: Invalid buffer register address: 0x%02X\n", address);
             return 0xFFFFFFFF;
         }
-        return vul_fpga_buffer_write(buf, address, s->command.fifo.data[0]);
+        return vul_fpga_buffer_write(buf, (uint8_t)address, s->command.data);
     default:
         qemu_log("VulFPGA: Invalid command opcode in vul_fpga_process_write: 0x%02X\n", opcode);
         break;
@@ -465,7 +465,7 @@ static uint32_t vul_fpga_process_write(VulFPGAState *s)
 static uint32_t vul_fpga_process_read(VulFPGAState *s)
 {
     VulFPGABUF *buf;
-    uint8_t address = s->command.fifo.address;
+    uint16_t address = s->command.address;
     uint8_t opcode = VUL_FPGA_COMMAND_OPCODE(s->command.opcode);
     if (opcode >= VUL_FPGA_OP_MAX) {
         qemu_log("VulFPGA: Invalid command opcode: 0x%02X\n", opcode);
@@ -496,7 +496,7 @@ static uint32_t vul_fpga_process_read(VulFPGAState *s)
             return 0xFFFFFFFF;
         }
 
-        return vul_fpga_buffer_read(buf, address);
+        return vul_fpga_buffer_read(buf, (uint8_t)address);
     default:
         qemu_log("VulFPGA: Invalid command opcode in vul_fpga_process_read: 0x%02X\n", opcode);
         break;
@@ -505,11 +505,44 @@ static uint32_t vul_fpga_process_read(VulFPGAState *s)
     return 0xFFFFFFFF;
 }
 
+static uint32_t vul_fpga_process_fifo_command(VulFPGAState *s)
+{
+    uint32_t ret = 0xFFFFFFFF;
+    uint8_t opcode = s->command.opcode;
+    uint16_t address = s->command.address;
+    uint8_t data = s->command.data;
+
+    if (data == 0) {
+        if (vul_fpga_is_dummy_data_valid(opcode, address)) {
+            /* write operation */
+            ret = vul_fpga_process_write(s);
+        } else {
+            /* read operation */
+            s->command.dummy_data_count++;
+            if (s->command.dummy_data_count == 1) {
+                /* ignore first dummy byte */
+                return 0;
+            }
+            ret = vul_fpga_process_read(s);
+            if (vul_fpga_is_read16_address(address) &&
+                s->command.dummy_data_count == 3) {
+                /* second byte of 16-bit read */
+                ret = ret >> 8;
+            }
+            ret = ret & 0xFF;
+        }
+    } else {
+        /* write operation */
+        ret = vul_fpga_process_write(s);
+    }
+
+    return ret;
+}
+
 static uint32_t vul_fpga_transfer(SSIPeripheral *ss, uint32_t data)
 {
     VulFPGAState *s = VUL_FPGA(ss);
     uint32_t ret = 0xFFFFFFFF;
-    static uint8_t dummy_data_count = 0;
 
     switch (s->state) {
     case VUL_FPGA_CMD_STATE_OPCODE:
@@ -518,67 +551,14 @@ static uint32_t vul_fpga_transfer(SSIPeripheral *ss, uint32_t data)
         ret = 0;
         break;
     case VUL_FPGA_CMD_STATE_ADDRESS:
-        s->command.fifo.address = (uint8_t)(data & 0xFF);
+        s->command.address = (uint8_t)(data & 0xFF);
         s->state = VUL_FPGA_CMD_STATE_DATA;
         ret = 0;
         break;
     case VUL_FPGA_CMD_STATE_DATA:
-        if (data == 0) {
-            if (vul_fpga_is_dummy_data_valid(s->command.opcode, s->command.fifo.address)) {
-                /* For write commands to CTRL or DATA registers, 0 is a valid data */
-                s->command.fifo.data[0] = 0;
-                ret = vul_fpga_process_write(s);
-                s->state = VUL_FPGA_CMD_STATE_OPCODE;
-                memset(&s->command, 0, sizeof(s->command));
-                dummy_data_count = 0;
-                break;
-            }
-
-            dummy_data_count++;
-            switch (dummy_data_count) {
-            case 1:
-                /* First dummy data, just ignore it */
-                ret = 0;
-                break;
-            case 2:
-                /* Second dummy data, process the command */
-                ret = vul_fpga_process_read(s);
-                ret = ret & 0xFF;
-                if (!vul_fpga_is_read16_address(s->command.fifo.address)) {
-                    /* For non-16-bit read commands, we are done after the second dummy data */
-                    dummy_data_count = 0;
-                    s->state = VUL_FPGA_CMD_STATE_OPCODE;
-                    memset(&s->command, 0, sizeof(s->command));
-                }
-                break;
-            case 3:
-                /* Third dummy data, only for 16-bit read commands */
-                if (!vul_fpga_is_read16_address(s->command.fifo.address)) {
-                    qemu_log("VulFPGA: Received unexpected third dummy data for non-16-bit read command\n");
-                    ret = 0xFFFFFFFF;
-                } else {
-                    ret = vul_fpga_process_read(s);
-                    ret = (ret >> 8) & 0xFF;
-                }
-                dummy_data_count = 0;
-                s->state = VUL_FPGA_CMD_STATE_OPCODE;
-                memset(&s->command, 0, sizeof(s->command));
-                break;
-            default:
-                qemu_log("VulFPGA: Received too many dummy data bytes\n");
-                ret = 0xFFFFFFFF;
-                dummy_data_count = 0;
-                s->state = VUL_FPGA_CMD_STATE_OPCODE;
-                memset(&s->command, 0, sizeof(s->command));
-                break;
-            }
-        } else {
-            // for now we only support 8-bit write commands
-            s->command.fifo.data[0] = (data & 0xFF);
-            ret = vul_fpga_process_write(s);
-            s->state = VUL_FPGA_CMD_STATE_OPCODE;
-            memset(&s->command, 0, sizeof(s->command));
-            dummy_data_count = 0;
+        if (vul_fpga_fifo_command(s->command.opcode)) {
+            s->command.data = (data & 0xFF);
+            ret = vul_fpga_process_fifo_command(s);
         }
         break;
     default:
@@ -593,7 +573,6 @@ static uint32_t vul_fpga_transfer(SSIPeripheral *ss, uint32_t data)
 static int vul_fpga_set_cs(SSIPeripheral *ss, bool select)
 {
     VulFPGAState *s = VUL_FPGA(ss);
-    qemu_log("VulFPGA: CS %s\n", select ? "asserted" : "deasserted");
     /* select=true means CS asserted (active), false means deasserted */
     if (!select) {
         /* Transaction ended: reset parsing state */
@@ -686,7 +665,7 @@ static void vul_fpga_class_init(ObjectClass *klass, void *data)
     k->transfer = vul_fpga_transfer;
     k->realize = vul_fpga_realize;
     k->set_cs = vul_fpga_set_cs;
-    k->cs_polarity = SSI_CS_LOW;
+    k->cs_polarity = SSI_CS_HIGH;
 
     // dc->realize = vul_fpga_realize;
     dc->unrealize = vul_fpga_unrealize;

@@ -81,7 +81,13 @@ static void sifive_spi_update_cs(SiFiveSPIState *s)
 
     for (i = 0; i < s->num_cs; i++) {
         if (s->regs[R_CSDEF] & (1 << i)) {
-            qemu_set_irq(s->cs_lines[i], !(s->regs[R_CSMODE]));
+            if (s->regs[R_CSMODE] == 2) {
+                /* assert cs line */
+                qemu_set_irq(s->cs_lines[i], 1);
+            } else {
+                /* deassert cs line */
+                qemu_set_irq(s->cs_lines[i], 0);
+            }
         }
     }
 }
