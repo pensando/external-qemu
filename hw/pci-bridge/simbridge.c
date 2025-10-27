@@ -72,6 +72,7 @@ typedef struct SimDevice {
     u_int16_t simbdf;
     MemoryRegion bar[6];
     SimBar simbar[6];
+    BarProps vf_bars[6];
     QTAILQ_ENTRY(SimDevice) list;
 } SimDevice;
 
@@ -89,6 +90,8 @@ static QemuMutex simdevices_lock;
 #define TYPE_SIM_DEVICE "simdevice"
 #define SIM_DEVICE(obj) \
     OBJECT_CHECK(SimDevice, (obj), TYPE_SIM_DEVICE)
+
+#define TYPE_SIM_DEVICE_VF "simdevice_vf"
 
 static int
 dbgprintf_is_enabled(void)
@@ -496,12 +499,55 @@ static void simdevice_msix_init(SimDevice *sd)
     return;
 }
 
+static uint16_t simdevice_find_sriov_cap(PCIDevice *pd, int simbdf) {
+    uint16_t offset = PCI_CFG_SPACE_SIZE;
+    uint64_t val;
+
+    while (offset && simc_cfgrd(simbdf, offset, 4, &val) == 0) {
+        /* NOTE: pcie_sriov_pf_init() relies on dev->config having the chain
+         * of capability headers leading to the SR-IOV capability, so we
+         * propagate them here. */
+        pci_set_long(pd->config + offset, val);
+        if (PCI_EXT_CAP_ID(val) == PCI_EXT_CAP_ID_SRIOV)
+            return offset;
+        offset = PCI_EXT_CAP_NEXT(val);
+    }
+    return 0;
+}
+
 static void simdevice_realize(PCIDevice *pd, Error **errp)
 {
     SimDevice *sd = (SimDevice *)pd;
+    u_int16_t sriov_cap_offset = simdevice_find_sriov_cap(pd, sd->simbdf);
 
     simdevice_register_bars(sd);
     simdevice_msix_init(sd);
+
+    if (sriov_cap_offset) {
+        uint64_t total_vfs, vf_dev_id, vf_offset, vf_stride;
+
+        if (simc_cfgrd(sd->simbdf, sriov_cap_offset + PCI_SRIOV_TOTAL_VF,  2, &total_vfs) != 0 ||
+            simc_cfgrd(sd->simbdf, sriov_cap_offset + PCI_SRIOV_VF_DID,    2, &vf_dev_id) != 0 ||
+            simc_cfgrd(sd->simbdf, sriov_cap_offset + PCI_SRIOV_VF_OFFSET, 2, &vf_offset) != 0 ||
+            simc_cfgrd(sd->simbdf, sriov_cap_offset + PCI_SRIOV_VF_STRIDE, 2, &vf_stride) != 0)
+            return;
+
+        dbgprintf("%s: sriov_cap=%d total_vfs=%ld devid=0x%lx offset=%ld stride=%ld\n", __func__,
+                  sriov_cap_offset, total_vfs, vf_dev_id, vf_offset, vf_stride);
+        pcie_sriov_pf_init(pd, sriov_cap_offset, TYPE_SIM_DEVICE_VF, vf_dev_id,
+                           total_vfs, total_vfs, vf_offset, vf_stride);
+
+        for (unsigned baridx = 0; baridx < 6; ++baridx) {
+            u_int64_t offset = sriov_cap_offset + PCI_SRIOV_BAR + baridx * 4;
+            BarProps props = query_bar(sd->simbdf, baridx, offset);
+            if (props.size) {
+                sd->vf_bars[baridx] = props;
+                pcie_sriov_pf_init_vf_bar(pd, baridx, props.type, props.size);
+                if (props.type == PCI_BASE_ADDRESS_MEM_TYPE_64)
+                    baridx += 1;
+            }
+        }
+    }
 }
 
 static void simdevice_class_init(ObjectClass *klass, void *data)
@@ -512,6 +558,38 @@ static void simdevice_class_init(ObjectClass *klass, void *data)
     pdc->config_read  = simdevice_cfgrd;
     pdc->config_write = simdevice_cfgwr;
     pdc->realize = simdevice_realize;
+    hc->pre_plug = pcie_cap_slot_pre_plug_cb;
+    hc->plug = pcie_cap_slot_plug_cb;
+    hc->unplug = pcie_cap_slot_unplug_cb;
+    hc->unplug_request = pcie_cap_slot_unplug_request_cb;
+}
+
+static void simdevice_vf_realize(PCIDevice *pd, Error **errp)
+{
+    SimDevice *vf = SIM_DEVICE(pd);
+    SimDevice *pf = SIM_DEVICE(pd->exp.sriov_vf.pf);
+
+    vf->sb = pf->sb;
+    vf->simbdf = PCI_BUILD_BDF(PCI_BUS_NUM(pf->simbdf), pd->devfn);
+
+    dbgprintf("%s: pf_bdf=%04x vf_bdf=%04x\n", __func__, pf->simbdf, vf->simbdf);
+
+    for (unsigned baridx = 0; baridx < 6; ++baridx) {
+        if (pf->vf_bars[baridx].size) {
+            init_bar_memory(vf, baridx, pf->vf_bars[baridx]);
+            pcie_sriov_vf_register_bar(pd, baridx, &vf->bar[baridx]);
+        }
+    }
+}
+
+static void simdevice_vf_class_init(ObjectClass *klass, void *data)
+{
+    PCIDeviceClass *pdc = PCI_DEVICE_CLASS(klass);
+    HotplugHandlerClass *hc = HOTPLUG_HANDLER_CLASS(klass);
+
+    pdc->config_read = simdevice_cfgrd;
+    pdc->config_write = simdevice_cfgwr;
+    pdc->realize = simdevice_vf_realize;
     hc->pre_plug = pcie_cap_slot_pre_plug_cb;
     hc->plug = pcie_cap_slot_plug_cb;
     hc->unplug = pcie_cap_slot_unplug_cb;
@@ -1133,6 +1211,16 @@ static const TypeInfo simdevice_info = {
     .instance_size = sizeof(SimDevice)
 };
 
+static const TypeInfo simdevice_vf_info = {
+    .name          = TYPE_SIM_DEVICE_VF,
+    .parent        = TYPE_SIM_DEVICE,
+    .class_init    = simdevice_vf_class_init,
+    .interfaces = (InterfaceInfo[]) {
+        { TYPE_HOTPLUG_HANDLER },
+        { INTERFACE_PCIE_DEVICE}, {} },
+    .instance_size = sizeof(SimDevice)
+};
+
 static void simbridge_register_types(void)
 {
     QTAILQ_INIT(&simdevices);
@@ -1141,6 +1229,7 @@ static void simbridge_register_types(void)
     type_register_static(&simbridge_info);
     type_register_static(&simbridgedn_info);
     type_register_static(&simdevice_info);
+    type_register_static(&simdevice_vf_info);
 }
 
 type_init(simbridge_register_types)
