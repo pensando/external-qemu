@@ -535,7 +535,7 @@ static SimDevice *simbridge_register_dev(SimBridgeDn *sbdn, int simbdf)
     sd->simbdf = simbdf;
 
     snprintf(name, sizeof(name), "simdevice-%04x", simbdf);
-    qdev_set_id(dev, name, &err);
+    qdev_set_id(dev, strdup(name), &err);
 
     bus = BUS(&(PCI_BRIDGE(sbdn)->sec_bus));
     qdev_set_parent_bus(dev, bus, &err);
@@ -568,7 +568,7 @@ static SimBridgeDn *simbridge_register_bridge(SimBridge *sb, int simbdf)
     sbdn->simbdf = simbdf;
 
     snprintf(name, sizeof(name), "simbridgedn-%04x", simbdf);
-    qdev_set_id(dev, name, &err);
+    qdev_set_id(dev, strdup(name), &err);
     qdev_prop_set_uint8(dev, "chassis", sb->chassis);
     qdev_prop_set_uint8(dev, "port", sb->port++);
     qdev_prop_set_uint8(dev, "slot", sb->slot++);
