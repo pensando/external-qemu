@@ -60,6 +60,11 @@ typedef struct SimBar {
     SimDevice *sd;
 } SimBar;
 
+typedef struct BarProps {
+    uint8_t type;
+    uint64_t size;
+} BarProps;
+
 typedef struct SimDevice {
     PCIDevice parent;
 
@@ -391,88 +396,85 @@ static const MemoryRegionOps io_ops = {
     },
 };
 
-static int simdevice_register_bar(SimDevice *sd, int baridx)
+static BarProps query_bar(u_int16_t bdf, int baridx, u_int16_t addr)
 {
-    PCIDevice *pd = PCI_DEVICE(sd);
-    const u_int16_t addr = 0x10 + (baridx * 4);
     const u_int8_t size = 4;
-    const u_int16_t bdf = sd->simbdf;
     u_int64_t v0, v1;
-    u_int32_t regtype;
-    u_int64_t regsize;
     uint32_t v;
-    int n;
+    BarProps props = {};
 
     v0 = v1 = 0;
     simc_cfgwr(bdf, addr, size, 0xffffffff);
     if (simc_cfgrd(bdf, addr, size, &v0) < 0) {
-        dbgprintf("simc_cfgrd addr 0x%x size %d failed\n", addr, size);
-        return 0;
+        dbgprintf("%s: simc_cfgrd addr 0x%x size %d failed\n", __func__, addr, size);
+        return props;
     }
     simc_cfgwr(bdf, addr, size, 0);
 
     /* no bits set?  no bar here. */
     if (v0 == 0) {
-        return 0;
+        return props;
     }
 
-    n = 0;
     if ((v0 & 0x1) == 0) {
         /* Memory space */
         if ((v0 & 0x7) == 0x0) {
             /* 32-bit */
-            regtype = PCI_BASE_ADDRESS_SPACE_MEMORY;
+            props.type = PCI_BASE_ADDRESS_SPACE_MEMORY;
             v = v0;
-            regsize = ~(v & ~0xf) + 1;
-            n = 1;
+            props.size = ~(v & ~0xf) + 1;
         } else if ((v0 & 0x7) == 0x4 && baridx < 5) {
             /* 64-bit */
-            regtype = PCI_BASE_ADDRESS_MEM_TYPE_64;
+            props.type = PCI_BASE_ADDRESS_MEM_TYPE_64;
             simc_cfgwr(bdf, addr + 4, size, 0xffffffff);
             simc_cfgrd(bdf, addr + 4, size, &v1);
             simc_cfgwr(bdf, addr + 4, size, 0);
-            regsize = ~((v1 << 32) | (v0 & ~0xf)) + 1;
-            n = 2;
+            props.size = ~((v1 << 32) | (v0 & ~0xf)) + 1;
         } else {
-            dbgprintf("register_bar: bad mem bar type: "
-                      "baridx %d v0 0x%"PRIx64"\n",
-                      baridx, v0);
+            dbgprintf("%s: bad mem bar type: baridx %d v0 0x%"PRIx64"\n",
+                      __func__, baridx, v0);
         }
     } else {
         /* I/O space */
-        regtype = PCI_BASE_ADDRESS_SPACE_IO;
+        props.type = PCI_BASE_ADDRESS_SPACE_IO;
         v = v0;
-        regsize = ~(v & ~0x3) + 1;
-        n = 1;
+        props.size = ~(v & ~0x3) + 1;
     }
 
-    if (n) {
-        SimBar *simbar = &sd->simbar[baridx];
+    dbgprintf("%s: bdf %04x addr %d baridx %d size 0x%"PRIx64" type %d\n",
+              __func__, bdf, addr, baridx, props.size, props.type);
 
-        simbar->sd = sd;
-        simbar->baridx = baridx;
+    return props;
+}
 
-        if (regtype == PCI_BASE_ADDRESS_SPACE_IO) {
-            memory_region_init_io(&sd->bar[baridx],
-                                  OBJECT(sd), &io_ops,
-                                  simbar,
-                                  "simdevice-io", regsize);
-        } else {
-            memory_region_init_io(&sd->bar[baridx],
-                                  OBJECT(sd), &mem_ops,
-                                  simbar,
-                                  "simdevice-mem", regsize);
-        }
+static void init_bar_memory(SimDevice *sd, int baridx, BarProps props)
+{
+    SimBar *simbar = &sd->simbar[baridx];
 
-        dbgprintf("register_bar: bdf %04x baridx %d n %d\n"
-                  "    v0 0x%"PRIx64" v1 0x%"PRIx64"\n"
-                  "    regsize 0x%"PRIx64" regtype %d\n",
-                  bdf, baridx, n,
-                  v0, v1,
-                  regsize, regtype);
-        pci_register_bar(pd, baridx, regtype, &sd->bar[baridx]);
+    simbar->sd = sd;
+    simbar->baridx = baridx;
+
+    if (props.type == PCI_BASE_ADDRESS_SPACE_IO) {
+        memory_region_init_io(&sd->bar[baridx],
+                              OBJECT(sd), &io_ops,
+                              simbar,
+                              "simdevice-io", props.size);
+    } else {
+        memory_region_init_io(&sd->bar[baridx],
+                              OBJECT(sd), &mem_ops,
+                              simbar,
+                              "simdevice-mem", props.size);
     }
-    return n;
+}
+
+static int simdevice_register_bar(SimDevice *sd, int baridx)
+{
+    BarProps props = query_bar(sd->simbdf, baridx, PCI_BASE_ADDRESS_0 + baridx * 4);
+    if (props.size) {
+        init_bar_memory(sd, baridx, props);
+        pci_register_bar(PCI_DEVICE(sd), baridx, props.type, &sd->bar[baridx]);
+    }
+    return props.type == PCI_BASE_ADDRESS_MEM_TYPE_64 ? 2 : 1;
 }
 
 static void simdevice_register_bars(SimDevice *sd)
