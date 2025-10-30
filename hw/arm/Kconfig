@@ -315,6 +315,8 @@ config VUL_SUC
     select STELLARIS_GPTM # general purpose timer module
     select UNIMP
     select SOCKDMA
+    select VUL_FPGA
+    select SIFIVE_SPI
 
 config STM32VLDISCOVERY
     bool
