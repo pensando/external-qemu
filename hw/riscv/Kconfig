@@ -73,6 +73,7 @@ config VUL_MODEL
     select SOCKDMA
     select SIFIVE_SPI
     select VUL_FPGA
+    select CMSDK_APB_WATCHDOG
 
 config SHAKTI_C
     bool
