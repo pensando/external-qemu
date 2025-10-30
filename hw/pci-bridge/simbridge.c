@@ -60,6 +60,11 @@ typedef struct SimBar {
     SimDevice *sd;
 } SimBar;
 
+typedef struct BarProps {
+    uint8_t type;
+    uint64_t size;
+} BarProps;
+
 typedef struct SimDevice {
     PCIDevice parent;
 
@@ -67,6 +72,7 @@ typedef struct SimDevice {
     u_int16_t simbdf;
     MemoryRegion bar[6];
     SimBar simbar[6];
+    BarProps vf_bars[6];
     QTAILQ_ENTRY(SimDevice) list;
 } SimDevice;
 
@@ -84,6 +90,8 @@ static QemuMutex simdevices_lock;
 #define TYPE_SIM_DEVICE "simdevice"
 #define SIM_DEVICE(obj) \
     OBJECT_CHECK(SimDevice, (obj), TYPE_SIM_DEVICE)
+
+#define TYPE_SIM_DEVICE_VF "simdevice_vf"
 
 static int
 dbgprintf_is_enabled(void)
@@ -391,88 +399,85 @@ static const MemoryRegionOps io_ops = {
     },
 };
 
-static int simdevice_register_bar(SimDevice *sd, int baridx)
+static BarProps query_bar(u_int16_t bdf, int baridx, u_int16_t addr)
 {
-    PCIDevice *pd = PCI_DEVICE(sd);
-    const u_int16_t addr = 0x10 + (baridx * 4);
     const u_int8_t size = 4;
-    const u_int16_t bdf = sd->simbdf;
     u_int64_t v0, v1;
-    u_int32_t regtype;
-    u_int64_t regsize;
     uint32_t v;
-    int n;
+    BarProps props = {};
 
     v0 = v1 = 0;
     simc_cfgwr(bdf, addr, size, 0xffffffff);
     if (simc_cfgrd(bdf, addr, size, &v0) < 0) {
-        dbgprintf("simc_cfgrd addr 0x%x size %d failed\n", addr, size);
-        return 0;
+        dbgprintf("%s: simc_cfgrd addr 0x%x size %d failed\n", __func__, addr, size);
+        return props;
     }
     simc_cfgwr(bdf, addr, size, 0);
 
     /* no bits set?  no bar here. */
     if (v0 == 0) {
-        return 0;
+        return props;
     }
 
-    n = 0;
     if ((v0 & 0x1) == 0) {
         /* Memory space */
         if ((v0 & 0x7) == 0x0) {
             /* 32-bit */
-            regtype = PCI_BASE_ADDRESS_SPACE_MEMORY;
+            props.type = PCI_BASE_ADDRESS_SPACE_MEMORY;
             v = v0;
-            regsize = ~(v & ~0xf) + 1;
-            n = 1;
+            props.size = ~(v & ~0xf) + 1;
         } else if ((v0 & 0x7) == 0x4 && baridx < 5) {
             /* 64-bit */
-            regtype = PCI_BASE_ADDRESS_MEM_TYPE_64;
+            props.type = PCI_BASE_ADDRESS_MEM_TYPE_64;
             simc_cfgwr(bdf, addr + 4, size, 0xffffffff);
             simc_cfgrd(bdf, addr + 4, size, &v1);
             simc_cfgwr(bdf, addr + 4, size, 0);
-            regsize = ~((v1 << 32) | (v0 & ~0xf)) + 1;
-            n = 2;
+            props.size = ~((v1 << 32) | (v0 & ~0xf)) + 1;
         } else {
-            dbgprintf("register_bar: bad mem bar type: "
-                      "baridx %d v0 0x%"PRIx64"\n",
-                      baridx, v0);
+            dbgprintf("%s: bad mem bar type: baridx %d v0 0x%"PRIx64"\n",
+                      __func__, baridx, v0);
         }
     } else {
         /* I/O space */
-        regtype = PCI_BASE_ADDRESS_SPACE_IO;
+        props.type = PCI_BASE_ADDRESS_SPACE_IO;
         v = v0;
-        regsize = ~(v & ~0x3) + 1;
-        n = 1;
+        props.size = ~(v & ~0x3) + 1;
     }
 
-    if (n) {
-        SimBar *simbar = &sd->simbar[baridx];
+    dbgprintf("%s: bdf %04x addr %d baridx %d size 0x%"PRIx64" type %d\n",
+              __func__, bdf, addr, baridx, props.size, props.type);
 
-        simbar->sd = sd;
-        simbar->baridx = baridx;
+    return props;
+}
 
-        if (regtype == PCI_BASE_ADDRESS_SPACE_IO) {
-            memory_region_init_io(&sd->bar[baridx],
-                                  OBJECT(sd), &io_ops,
-                                  simbar,
-                                  "simdevice-io", regsize);
-        } else {
-            memory_region_init_io(&sd->bar[baridx],
-                                  OBJECT(sd), &mem_ops,
-                                  simbar,
-                                  "simdevice-mem", regsize);
-        }
+static void init_bar_memory(SimDevice *sd, int baridx, BarProps props)
+{
+    SimBar *simbar = &sd->simbar[baridx];
 
-        dbgprintf("register_bar: bdf %04x baridx %d n %d\n"
-                  "    v0 0x%"PRIx64" v1 0x%"PRIx64"\n"
-                  "    regsize 0x%"PRIx64" regtype %d\n",
-                  bdf, baridx, n,
-                  v0, v1,
-                  regsize, regtype);
-        pci_register_bar(pd, baridx, regtype, &sd->bar[baridx]);
+    simbar->sd = sd;
+    simbar->baridx = baridx;
+
+    if (props.type == PCI_BASE_ADDRESS_SPACE_IO) {
+        memory_region_init_io(&sd->bar[baridx],
+                              OBJECT(sd), &io_ops,
+                              simbar,
+                              "simdevice-io", props.size);
+    } else {
+        memory_region_init_io(&sd->bar[baridx],
+                              OBJECT(sd), &mem_ops,
+                              simbar,
+                              "simdevice-mem", props.size);
     }
-    return n;
+}
+
+static int simdevice_register_bar(SimDevice *sd, int baridx)
+{
+    BarProps props = query_bar(sd->simbdf, baridx, PCI_BASE_ADDRESS_0 + baridx * 4);
+    if (props.size) {
+        init_bar_memory(sd, baridx, props);
+        pci_register_bar(PCI_DEVICE(sd), baridx, props.type, &sd->bar[baridx]);
+    }
+    return props.type == PCI_BASE_ADDRESS_MEM_TYPE_64 ? 2 : 1;
 }
 
 static void simdevice_register_bars(SimDevice *sd)
@@ -494,12 +499,55 @@ static void simdevice_msix_init(SimDevice *sd)
     return;
 }
 
+static uint16_t simdevice_find_sriov_cap(PCIDevice *pd, int simbdf) {
+    uint16_t offset = PCI_CFG_SPACE_SIZE;
+    uint64_t val;
+
+    while (offset && simc_cfgrd(simbdf, offset, 4, &val) == 0) {
+        /* NOTE: pcie_sriov_pf_init() relies on dev->config having the chain
+         * of capability headers leading to the SR-IOV capability, so we
+         * propagate them here. */
+        pci_set_long(pd->config + offset, val);
+        if (PCI_EXT_CAP_ID(val) == PCI_EXT_CAP_ID_SRIOV)
+            return offset;
+        offset = PCI_EXT_CAP_NEXT(val);
+    }
+    return 0;
+}
+
 static void simdevice_realize(PCIDevice *pd, Error **errp)
 {
     SimDevice *sd = (SimDevice *)pd;
+    u_int16_t sriov_cap_offset = simdevice_find_sriov_cap(pd, sd->simbdf);
 
     simdevice_register_bars(sd);
     simdevice_msix_init(sd);
+
+    if (sriov_cap_offset) {
+        uint64_t total_vfs, vf_dev_id, vf_offset, vf_stride;
+
+        if (simc_cfgrd(sd->simbdf, sriov_cap_offset + PCI_SRIOV_TOTAL_VF,  2, &total_vfs) != 0 ||
+            simc_cfgrd(sd->simbdf, sriov_cap_offset + PCI_SRIOV_VF_DID,    2, &vf_dev_id) != 0 ||
+            simc_cfgrd(sd->simbdf, sriov_cap_offset + PCI_SRIOV_VF_OFFSET, 2, &vf_offset) != 0 ||
+            simc_cfgrd(sd->simbdf, sriov_cap_offset + PCI_SRIOV_VF_STRIDE, 2, &vf_stride) != 0)
+            return;
+
+        dbgprintf("%s: sriov_cap=%d total_vfs=%ld devid=0x%lx offset=%ld stride=%ld\n", __func__,
+                  sriov_cap_offset, total_vfs, vf_dev_id, vf_offset, vf_stride);
+        pcie_sriov_pf_init(pd, sriov_cap_offset, TYPE_SIM_DEVICE_VF, vf_dev_id,
+                           total_vfs, total_vfs, vf_offset, vf_stride, errp);
+
+        for (unsigned baridx = 0; baridx < 6; ++baridx) {
+            u_int64_t offset = sriov_cap_offset + PCI_SRIOV_BAR + baridx * 4;
+            BarProps props = query_bar(sd->simbdf, baridx, offset);
+            if (props.size) {
+                sd->vf_bars[baridx] = props;
+                pcie_sriov_pf_init_vf_bar(pd, baridx, props.type, props.size);
+                if (props.type == PCI_BASE_ADDRESS_MEM_TYPE_64)
+                    baridx += 1;
+            }
+        }
+    }
 }
 
 static void simdevice_class_init(ObjectClass *klass, const void *data)
@@ -510,6 +558,38 @@ static void simdevice_class_init(ObjectClass *klass, const void *data)
     pdc->config_read  = simdevice_cfgrd;
     pdc->config_write = simdevice_cfgwr;
     pdc->realize = simdevice_realize;
+    hc->pre_plug = pcie_cap_slot_pre_plug_cb;
+    hc->plug = pcie_cap_slot_plug_cb;
+    hc->unplug = pcie_cap_slot_unplug_cb;
+    hc->unplug_request = pcie_cap_slot_unplug_request_cb;
+}
+
+static void simdevice_vf_realize(PCIDevice *pd, Error **errp)
+{
+    SimDevice *vf = SIM_DEVICE(pd);
+    SimDevice *pf = SIM_DEVICE(pd->exp.sriov_vf.pf);
+
+    vf->sb = pf->sb;
+    vf->simbdf = PCI_BUILD_BDF(PCI_BUS_NUM(pf->simbdf), pd->devfn);
+
+    dbgprintf("%s: pf_bdf=%04x vf_bdf=%04x\n", __func__, pf->simbdf, vf->simbdf);
+
+    for (unsigned baridx = 0; baridx < 6; ++baridx) {
+        if (pf->vf_bars[baridx].size) {
+            init_bar_memory(vf, baridx, pf->vf_bars[baridx]);
+            pci_register_bar(pd, baridx, pf->vf_bars[baridx].type, &vf->bar[baridx]);
+        }
+    }
+}
+
+static void simdevice_vf_class_init(ObjectClass *klass, const void *data)
+{
+    PCIDeviceClass *pdc = PCI_DEVICE_CLASS(klass);
+    HotplugHandlerClass *hc = HOTPLUG_HANDLER_CLASS(klass);
+
+    pdc->config_read = simdevice_cfgrd;
+    pdc->config_write = simdevice_cfgwr;
+    pdc->realize = simdevice_vf_realize;
     hc->pre_plug = pcie_cap_slot_pre_plug_cb;
     hc->plug = pcie_cap_slot_plug_cb;
     hc->unplug = pcie_cap_slot_unplug_cb;
@@ -535,7 +615,7 @@ static SimDevice *simbridge_register_dev(SimBridgeDn *sbdn, int simbdf)
     sd->simbdf = simbdf;
 
     snprintf(name, sizeof(name), "simdevice-%04x", simbdf);
-    qdev_set_id(dev, name, &err);
+    qdev_set_id(dev, strdup(name), &err);
 
     bus = BUS(&(PCI_BRIDGE(sbdn)->sec_bus));
     qdev_set_parent_bus(dev, bus, &err);
@@ -568,7 +648,7 @@ static SimBridgeDn *simbridge_register_bridge(SimBridge *sb, int simbdf)
     sbdn->simbdf = simbdf;
 
     snprintf(name, sizeof(name), "simbridgedn-%04x", simbdf);
-    qdev_set_id(dev, name, &err);
+    qdev_set_id(dev, strdup(name), &err);
     qdev_prop_set_uint8(dev, "chassis", sb->chassis);
     qdev_prop_set_uint8(dev, "port", sb->port++);
     qdev_prop_set_uint8(dev, "slot", sb->slot++);
@@ -1131,6 +1211,16 @@ static const TypeInfo simdevice_info = {
     .instance_size = sizeof(SimDevice)
 };
 
+static const TypeInfo simdevice_vf_info = {
+    .name          = TYPE_SIM_DEVICE_VF,
+    .parent        = TYPE_SIM_DEVICE,
+    .class_init    = simdevice_vf_class_init,
+    .interfaces = (InterfaceInfo[]) {
+        { TYPE_HOTPLUG_HANDLER },
+        { INTERFACE_PCIE_DEVICE}, {} },
+    .instance_size = sizeof(SimDevice)
+};
+
 static void simbridge_register_types(void)
 {
     QTAILQ_INIT(&simdevices);
@@ -1139,6 +1229,7 @@ static void simbridge_register_types(void)
     type_register_static(&simbridge_info);
     type_register_static(&simbridgedn_info);
     type_register_static(&simdevice_info);
+    type_register_static(&simdevice_vf_info);
 }
 
 type_init(simbridge_register_types)
