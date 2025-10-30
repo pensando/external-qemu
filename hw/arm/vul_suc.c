@@ -36,6 +36,8 @@
 #include "qobject/qlist.h"
 #include "ui/input.h"
 #include "hw/block/flash.h"
+#include "hw/misc/vul_fpga.h"
+#include "hw/ssi/sifive_spi.h"
 
 #define GPIO_A 0
 #define GPIO_B 1
@@ -106,6 +108,10 @@ struct VulSucMachineState {
         DeviceState *sockdma_dev;
     } sockdmas[ARRAY_SIZE(sockdma_infos)];
     PFlashCFI01 *suc_flash;
+    char *fpga_emu_sock;
+    bool fpga_emu_is_server;
+    DeviceState *fpga_dev;
+    SiFiveSPIState *spi0;
 };
 
 /* System controller.  */
@@ -144,6 +150,31 @@ struct ssys_state {
 };
 
 SOCKDMA_DEFINE_SET_SOCK_ADDR(0);
+
+static void vul_suc_set_fpga_emu_conf(Object *obj, const char *val, Error **errp)
+{
+    VulSucMachineState *s = VUL_SUC_MACHINE(obj);
+    s->fpga_emu_sock = g_strdup(val);
+}
+
+static void vul_suc_set_fpga_emu_mode_conf(Object *obj, const char *val, Error **errp)
+{
+    VulSucMachineState *s = VUL_SUC_MACHINE(obj);
+
+    if (!val) {
+        s->fpga_emu_is_server = true;
+        return;
+    }
+
+    if (g_ascii_strcasecmp(val, "client") == 0) {
+        s->fpga_emu_is_server = false;
+    } else if (g_ascii_strcasecmp(val, "server") == 0) {
+        s->fpga_emu_is_server = true;
+    } else {
+        error_setg(errp, "Invalid FPGA emulation mode");
+        error_append_hint(errp, "Valid values are 'client' or 'server'.\n");
+    }
+}
 
 static void ssys_update(ssys_state *s)
 {
@@ -1055,6 +1086,33 @@ static void vul_suc_flash_map1(PFlashCFI01 *flash,
                                 sysbus_mmio_get_region(SYS_BUS_DEVICE(dev), 0));
 }
 
+static DeviceState *sifive_spi0_create_suc(hwaddr addr, qemu_irq irq, char *sock,
+                                     bool is_server, bool is_soc)
+{
+    // Create SiFive SPI0 device
+    DeviceState *dev = qdev_new(TYPE_SIFIVE_SPI);
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, addr);
+
+    if (irq) {
+        sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, irq);
+    }
+
+    if (sock) {
+        SiFiveSPIState *spi = SIFIVE_SPI(dev);
+        DeviceState *fpga_dev = vul_fpga_create(sock, is_server, is_soc);
+
+        // Set CS property before realising
+        qdev_prop_set_uint8(fpga_dev, "cs", 0);
+        qdev_realize_and_unref(fpga_dev, BUS(spi->spi), &error_fatal);
+
+        qemu_irq cs_line = qdev_get_gpio_in_named(fpga_dev, SSI_GPIO_CS, 0);
+        sysbus_connect_irq(SYS_BUS_DEVICE(dev), 1, cs_line);
+    }
+
+    return dev;
+}
+
 static void vul_suc_init_board(MachineState *ms, vul_suc_board_info *board)
 {
     static const int uart_irq[] = {5, 6, 33, 34};
@@ -1117,6 +1175,8 @@ static void vul_suc_init_board(MachineState *ms, vul_suc_board_info *board)
     MemoryRegion *sram = g_new(MemoryRegion, 1);
     MemoryRegion *flash = g_new(MemoryRegion, 1);
     MemoryRegion *system_memory = get_system_memory();
+
+    VulSucMachineState *s = VUL_SUC_MACHINE(ms);
 
     flash_size = (((board->dc0 & 0xffff) + 1) << 1) * 1024;
     sram_size = ((board->dc0 >> 18) + 1) * 1024;
@@ -1421,6 +1481,12 @@ static void vul_suc_init_board(MachineState *ms, vul_suc_board_info *board)
     create_unimplemented_device("hibernation", 0x400fc000, 0x1000);
     create_unimplemented_device("flash-control", 0x400fd000, 0x1000);
 
+    if (s->fpga_emu_sock) {
+        s->spi0 = SIFIVE_SPI(sifive_spi0_create_suc(0x44000800,
+            qdev_get_gpio_in(nvic, 7), s->fpga_emu_sock,
+            s->fpga_emu_is_server, false));
+    }
+
     armv7m_load_kernel(ARM_CPU(first_cpu), ms->kernel_filename, 0, flash_size);
 }
 
@@ -1457,6 +1523,14 @@ static void vul_suc_class_init(ObjectClass *oc, const void *data)
         object_class_property_set_description(oc, sockdma_infos[i].name,
                                               sockdma_infos[i].description);
     }
+
+    object_class_property_add_str(oc, "fpga-emu", NULL, vul_suc_set_fpga_emu_conf);
+    object_class_property_set_description(oc, "fpga-emu",
+                                          "The socket to use for FPGA emulation.");
+
+    object_class_property_add_str(oc, "fpga-emu-mode", NULL, vul_suc_set_fpga_emu_mode_conf);
+    object_class_property_set_description(oc, "fpga-emu-mode",
+                                          "The FPGA emulation mode, either 'client' or 'server'.");
 }
 
 static void vul_suc_instance_init(Object *obj)
