@@ -112,6 +112,9 @@ void pcie_sriov_vf_register_bar(PCIDevice *dev, int region_num,
     PCIBus *bus = pci_get_bus(dev);
     uint8_t type;
     pcibus_t size = memory_region_size(memory);
+    PCIDevice *pf = dev->exp.sriov_vf.pf;
+    uint16_t pf_ctrl = pci_get_word(pf->config + pf->exp.sriov_cap + PCI_SRIOV_CTRL);
+    uint16_t command = pci_get_word(dev->config + PCI_COMMAND);
 
     assert(pci_is_vf(dev)); /* PFs must use pci_register_bar */
     assert(region_num >= 0);
@@ -133,6 +136,14 @@ void pcie_sriov_vf_register_bar(PCIDevice *dev, int region_num,
         : bus->address_space_mem;
     r->size = size;
     r->type = type;
+
+    /* pci_bar_address checks the command word and returns UNMAPPED if the MSE bit is
+     * not set, so we propagate the MSE bit from the PF's SRIOV register. */
+    if (pf_ctrl & PCI_SRIOV_CTRL_MSE)
+        command |= PCI_COMMAND_MEMORY;
+    else
+        command &= ~PCI_COMMAND_MEMORY;
+    pci_set_word(dev->config + PCI_COMMAND, command);
 
     r->addr = pci_bar_address(dev, region_num, r->type, r->size);
     if (r->addr != PCI_BAR_UNMAPPED) {
