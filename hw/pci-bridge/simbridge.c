@@ -282,10 +282,11 @@ static void simdevice_cfgwr(PCIDevice *pd,
     u_int64_t val = data;
 
     /*
-     * Send this write down to pci layer to update
+     * Send PF writes down to pci layer to update
      * bar addresses when they come.
      */
-    pci_default_write_config(pd, addr, data, len);
+    if (!pci_is_vf(pd))
+        pci_default_write_config(pd, addr, data, len);
 
     if (simc_cfgwr(sd->simbdf, addr, len, val) < 0) {
         dbgprintf("simdevice_cfgwr(0x%04x, 0x%x, %d) = 0x%"PRIx64" failed\n",
