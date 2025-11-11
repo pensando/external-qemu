@@ -879,7 +879,9 @@ static void vul_fpga_realize(SSIPeripheral *ss, Error **errp)
     }
 
     /* initialize fru buffer*/
-    memset(s->fru, 0, sizeof(s->fru));
+    memset(s->fru, 0xFF, sizeof(s->fru));
+    fru_data_init(s->fru);
+
     /* initialize cpld registers*/
     memset(s->regs, 0, sizeof(s->regs));
     cpld_regs_init(s->regs);
