@@ -15,11 +15,14 @@ typedef struct VulFPGABUFRegs {
 } __packed__ VulFPGABUFRegs;
 
 typedef enum VulFPGARegAddr {
-    VUL_FPGA_REG_ADDR_DATA = 0,
-    VUL_FPGA_REG_ADDR_SIZE,
-    VUL_FPGA_REG_ADDR_LENGTH,
-    VUL_FPGA_REG_ADDR_CTRL,
-    VUL_FPGA_REG_ADDR_STATUS,
+    VUL_FPGA_REG_ADDR_DATA             = 0x00,
+    VUL_FPGA_REG_ADDR_SIZE             = 0x01,
+    VUL_FPGA_REG_ADDR_LENGTH           = 0x02,
+    VUL_FPGA_REG_ADDR_CTRL             = 0x03,
+    VUL_FPGA_REG_ADDR_STATUS           = 0x04,
+    VUL_FPGA_REG_ADDR_LENGTH_SHADOW    = 0x82,
+    VUL_FPGA_REG_ADDR_CTRL_SHADOW      = 0x83,
+    VUL_FPGA_REG_ADDR_STATUS_SHADOW    = 0x84,
 } VulFPGARegAddr;
 
 typedef enum VulFPGABUFDir {
@@ -37,10 +40,10 @@ typedef enum VulFPGABUFType {
 } VulFPGABUFType;
 
 typedef struct VulFPGABUF {
-    VulFPGABUFType type;
-    VulFPGABUFDir dir;
-    VulFPGABUFRegs regs;
-    Fifo8 fifo;
+    struct {
+        VulFPGABUFRegs regs;
+        Fifo8 fifo;
+    } tx, rx;
     void *state; /* parent state */
 } VulFPGABUF;
 
