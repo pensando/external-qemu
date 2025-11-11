@@ -10,11 +10,10 @@
 
 #include "hw/misc/vul_fpgabuf.h"
 #include "hw/misc/vul_cpldreg.h"
+#include "hw/misc/vul_fpgafru.h"
 
 #define TYPE_VUL_FPGA "vul_fpga"
 OBJECT_DECLARE_SIMPLE_TYPE(VulFPGAState, VUL_FPGA)
-
-#define VUL_FPGA_FRU_SIZE     1024
 
 #define VUL_FPGABUF_FIFO_SIZE 528 // Max size of FPGA buffer
 #define VUL_FPGABUF_MCTP_SIZE 528
