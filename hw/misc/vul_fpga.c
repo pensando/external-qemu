@@ -8,30 +8,26 @@
 #define LISTENER_BACKLOG 1
 
 static VulFPGABUF buffers[] = {
-    [VUL_FPGA_OP_MCTP_WRITE] = {
-        .type = VUL_FPGABUF_MCTP,
-        .dir = VUL_FPGABUF_DIR_TO_FPGA,
-        .regs.size = VUL_FPGABUF_MCTP_SIZE,
-        .regs.opcode = VUL_FPGA_OP_MCTP_WRITE,
+    [VUL_FPGABUF_MCTP] = {
+        .tx.regs = {
+            .size = VUL_FPGABUF_MCTP_SIZE,
+            .opcode = VUL_FPGA_OP_MCTP_WRITE,
+        },
+        .rx.regs = {
+            .size = VUL_FPGABUF_MCTP_SIZE,
+            .opcode = VUL_FPGA_OP_MCTP_READ,
+        },
     },
-    [VUL_FPGA_OP_MCTP_READ] = {
-        .type = VUL_FPGABUF_MCTP,
-        .dir = VUL_FPGABUF_DIR_FROM_FPGA,
-        .regs.size = VUL_FPGABUF_MCTP_SIZE,
-        .regs.opcode = VUL_FPGA_OP_MCTP_READ,
-    },
-    [VUL_FPGA_OP_CMD_WRITE] = {
-        .type = VUL_FPGABUF_CMD,
-        .dir = VUL_FPGABUF_DIR_TO_FPGA,
-        .regs.size = VUL_FPGABUF_CMD_SIZE,
-        .regs.opcode = VUL_FPGA_OP_CMD_WRITE,
-    },
-    [VUL_FPGA_OP_CMD_READ] = {
-        .type = VUL_FPGABUF_CMD,
-        .dir = VUL_FPGABUF_DIR_FROM_FPGA,
-        .regs.size = VUL_FPGABUF_CMD_SIZE,
-        .regs.opcode = VUL_FPGA_OP_CMD_READ,
-    },
+    [VUL_FPGABUF_CMD] = {
+        .tx.regs = {
+            .size = VUL_FPGABUF_CMD_SIZE,
+            .opcode = VUL_FPGA_OP_CMD_WRITE,
+        },
+        .rx.regs = {
+            .size = VUL_FPGABUF_CMD_SIZE,
+            .opcode = VUL_FPGA_OP_CMD_READ,
+        },
+    }
 };
 
 static void vul_fpga_socket_client_close(VulFPGAState *s)
@@ -40,79 +36,6 @@ static void vul_fpga_socket_client_close(VulFPGAState *s)
         qemu_log("VulFPGA: Closing client socket\n");
         object_unref(OBJECT(s->csocket));
         s->csocket = NULL;
-    }
-}
-
-static void vul_fpga_socket_send(VulFPGAState *s, char *buf, size_t size)
-{
-    QIOChannel *ioc = QIO_CHANNEL(s->csocket);
-    Error *err = NULL;
-
-    if (!s->csocket) {
-        qemu_log("VulFPGA: No client connected, cannot send buffer\n");
-        return;
-    }
-
-    if (qio_channel_write(ioc, buf, size, &err) <= 0) {
-        /* A failure may happen because the other host has shut down the socket, but we haven't gotten to know that
-         * because we haven't polled yet/haven't performed our side of the shutdown in case we support interrupts.
-         * Whatever the reason, don't explode, free the resources associated to the socket and report the error to
-         * the driver */
-        if (err) {
-            qemu_log("VulFPGA: Socket write error: %s\n", error_get_pretty(err));
-            error_report_err(err);
-        }
-
-        vul_fpga_socket_client_close(s);
-        return;
-    }
-}
-
-
-static void vul_fpga_process_ctrl(VulFPGABUF *buf)
-{
-    char out_buf[VUL_FPGA_HDR_SIZE + VUL_FPGABUF_BUFFER_SIZE] = { 0 };
-    char *out_data = out_buf;
-    VulFPGAState *s = (VulFPGAState *)buf->state;
-    VulFPGAHDR vulfpgahdr;
-
-    vulfpgahdr.opcode = buf->regs.opcode;
-    vulfpgahdr.data_size = VUL_FPGABUF_BUFFER_SIZE;
-    memcpy(out_data, (const char *)&vulfpgahdr, VUL_FPGA_HDR_SIZE);
-    out_data = out_buf + VUL_FPGA_HDR_SIZE;
-
-    if (buf->dir == VUL_FPGABUF_DIR_TO_FPGA) {
-        if ((buf->regs.status & STATUS_OWNER_MASK) == STATUS_OWNER_CLIENT) {
-            // server send buffer ownership to client
-            uint16_t out_buf_off = 0;
-            buf->regs.ctrl = 0;
-            memcpy(out_data, &buf->regs, sizeof(VulFPGABUFRegs));
-            while(fifo8_is_empty(&buf->fifo) != true) {
-                out_data[sizeof(VulFPGABUFRegs) + out_buf_off] = fifo8_pop(&buf->fifo);
-                out_buf_off++;
-            }
-            buf->regs.status &= ~STATUS_FULL_MASK;
-            buf->regs.status &= ~STATUS_OVERFLOW_MASK;
-            buf->regs.status |= STATUS_EMPTY_MASK;
-            buf->regs.length = 0;
-            vul_fpga_socket_send(s, out_buf, sizeof(out_buf));
-        } else {
-            qemu_log("Vul_FPGA: Tried to send data to client but buffer not owned by client\n");
-        }
-    } else if (buf->dir == VUL_FPGABUF_DIR_FROM_FPGA) {
-        if ((buf->regs.status & STATUS_OWNER_MASK) == STATUS_OWNER_SERVER) {
-            // server is sending back buffer ownership to client
-            buf->regs.ctrl = 0;
-            buf->regs.status = 0;
-            buf->regs.length = 0;
-            // sync buffer register with client
-            memcpy(out_data, &buf->regs, sizeof(VulFPGABUFRegs));
-            vul_fpga_socket_send(s, out_buf, sizeof(VulFPGABUFRegs) + VUL_FPGA_HDR_SIZE);
-        } else {
-            qemu_log("Vul_FPGA: Tried to return buffer to client while server holding the buffer\n");
-        }
-    } else {
-        qemu_log("VulFPGA: Invalid buffer direction in vul_fpga_process_ctrl\n");
     }
 }
 
@@ -183,56 +106,40 @@ static gboolean vul_fpga_fifo_msg (QIOChannel *ioc, GIOCondition cond, gpointer 
         return TRUE;
     }
 
-    /* TX buf in one side will be RX buf in the other end */
-    if (vul_fpga_is_read_opcode(opcode)) {
-        // read opcode is always one less the write opcode
-        buf = &s->buffers[opcode - 1];
-    } else {
-        // write opcode is always one more the read opcode
-        buf = &s->buffers[opcode + 1];
-    }
-
+    buf = vul_fpga_get_buffer(s, opcode);
     if ((in_regs->status & STATUS_OWNER_MASK) == STATUS_OWNER_SERVER &&
         in_regs->length == 0) {
         // Client returned buffer ownership back to server
-        if (buf->dir != VUL_FPGABUF_DIR_TO_FPGA) {
-            qemu_log("VulFPGA: Buffer %d is not a TO_FPGA buffer\n", opcode);
-            return TRUE;
-        }
-        buf->regs.status = 0;
-        buf->regs.length = 0;
-        buf->regs.ctrl = 0;
-        fifo8_reset(&buf->fifo);
+        buf->tx.regs.status = 0;
+        buf->tx.regs.length = 0;
+        buf->tx.regs.ctrl = 0;
+        fifo8_reset(&buf->tx.fifo);
     } else if ((in_regs->status & STATUS_OWNER_MASK) == STATUS_OWNER_CLIENT) {
         // Client sent data to server
-        if (buf->dir != VUL_FPGABUF_DIR_FROM_FPGA) {
-            qemu_log("VulFPGA: Buffer %d is not a FROM_FPGA buffer\n", opcode);
-            return TRUE;
-        }
         if (in_regs->length > VUL_FPGABUF_FIFO_SIZE) {
             qemu_log("VulFPGA: Overflow detected in buffer %d\n", opcode);
-            buf->regs.status |= STATUS_OVERFLOW_MASK;
+            buf->rx.regs.status |= STATUS_OVERFLOW_MASK;
             return TRUE;
         }
 
         // Clear existing FIFO before pushing new data
-        fifo8_reset(&buf->fifo);
-        buf->regs.length = 0;
+        fifo8_reset(&buf->rx.fifo);
+        buf->rx.regs.length = 0;
 
-        buf->regs.status = in_regs->status;
+        buf->rx.regs.status = in_regs->status;
         for (uint16_t i = 0; i < in_regs->length; i++) {
-            if (fifo8_is_full(&buf->fifo)) {
-                buf->regs.status |= STATUS_OVERFLOW_MASK;
+            if (fifo8_is_full(&buf->rx.fifo)) {
+                buf->rx.regs.status |= STATUS_OVERFLOW_MASK;
                 qemu_log("VulFPGA: Overflow detected in buffer %d\n", opcode);
                 break;
             }
-            fifo8_push(&buf->fifo, in_data[sizeof(VulFPGABUFRegs) + i]);
+            fifo8_push(&buf->rx.fifo, in_data[sizeof(VulFPGABUFRegs) + i]);
         }
-        buf->regs.length = fifo8_num_used(&buf->fifo);
-        if (buf->regs.length == 0) {
-            buf->regs.status |= STATUS_EMPTY_MASK;
+        buf->rx.regs.length = fifo8_num_used(&buf->rx.fifo);
+        if (buf->rx.regs.length == 0) {
+            buf->rx.regs.status |= STATUS_EMPTY_MASK;
         } else {
-            buf->regs.status &= ~STATUS_EMPTY_MASK;
+            buf->rx.regs.status &= ~STATUS_EMPTY_MASK;
         }
     } else {
         qemu_log("VulFPGA: Invalid status received in buffer %d\n", opcode);
@@ -277,224 +184,234 @@ static gboolean vul_fpga_socket_watch_cb(QIOChannel *ioc, GIOCondition cond, gpo
     return TRUE;
 }
 
-static void vul_fpga_socket_cb(QIONetListener *listener, QIOChannelSocket *sioc, gpointer data)
+static void vul_fpga_socket_send(VulFPGAState *s, char *buf, size_t size)
 {
-    VulFPGAState *s = (VulFPGAState *)data;
+    QIOChannel *ioc = QIO_CHANNEL(s->csocket);
     Error *err = NULL;
 
-    object_ref(OBJECT(sioc));
-    s->csocket = sioc;
-    QIOChannel *ioc = QIO_CHANNEL(sioc);
-    if (!ioc) {
-        qemu_log("VulFPGA: Failed to get QIOChannel from QIOChannelSocket\n");
-        object_unref(OBJECT(sioc));
-        return;
-    }
-    /* Set the socket to non-blocking mode.
-     * If we don't do this, QEMU execution will stall until we get some data, which may be never
-     */
-    qio_channel_set_blocking(ioc, false, &err);
-    if (err) {
-        error_report_err(err);
-        object_unref(OBJECT(sioc));
-        return;
-    }
-    qemu_log("Client connected to VulFPGA socket\n");
-
-    /* Register read callback */
-    qio_channel_add_watch(ioc, G_IO_IN, vul_fpga_socket_watch_cb, s, NULL);
-}
-
-static void vul_fpga_socket_setup(VulFPGAState *s, Error **errp)
-{
-    Error *err = NULL;
-
-    s->laddr = socket_parse(s->laddr_str, &err);
-    if (err) {
-        error_propagate(errp, err);
-        return;
-    }
-    s->lsocket = qio_net_listener_new();
-    assert(s->lsocket);
-    qio_net_listener_set_client_func(s->lsocket,
-                                     vul_fpga_socket_cb,
-                                     s,
-                                     NULL);
-    qio_net_listener_open_sync(s->lsocket, s->laddr, LISTENER_BACKLOG, &err);
-    if (err) {
-        error_propagate(errp, err);
-    }
-}
-
-static void vul_fpga_socket_connect(VulFPGAState *s, Error **errp)
-{
-    Error *err = NULL;
-
-    if (s->csocket) {
-        /* already connected */
+    if (!s->csocket) {
+        qemu_log("VulFPGA: No client connected, cannot send buffer\n");
         return;
     }
 
-    s->laddr = socket_parse(s->laddr_str, &err);
-    if (err) {
-        error_propagate(errp, err);
-        return;
-    }
-
-    for (;;) {
-        s->csocket = qio_channel_socket_new();
-        assert(s->csocket);
-        QIOChannel *ioc = QIO_CHANNEL(s->csocket);
-        if (!ioc) {
-            qemu_log("VulFPGA: Failed to get QIOChannel from QIOChannelSocket\n");
-            object_unref(OBJECT(s->csocket));
-            s->csocket = NULL;
-            return;
-        }
-
-        qio_channel_socket_connect_sync(s->csocket, s->laddr, &err);
+    if (qio_channel_write(ioc, buf, size, &err) <= 0) {
+        /* A failure may happen because the other host has shut down the socket, but we haven't gotten to know that
+         * because we haven't polled yet/haven't performed our side of the shutdown in case we support interrupts.
+         * Whatever the reason, don't explode, free the resources associated to the socket and report the error to
+         * the driver */
         if (err) {
-            qemu_log("VulFPGA: Socket connection failed: %s\n", error_get_pretty(err));
+            qemu_log("VulFPGA: Socket write error: %s\n", error_get_pretty(err));
             error_report_err(err);
-            object_unref(OBJECT(s->csocket));
-            s->csocket = NULL;
-            /* Retry connection after a short delay */
-            g_usleep(500000); // 500 ms
-            err = NULL;
-            continue;
         }
 
-        /* Success: now switch to non-blocking and install watch */
-        qio_channel_set_blocking(ioc, false, &err);
-        if (err) {
-            qemu_log("VulFPGA: Failed to set non-blocking mode: %s\n", error_get_pretty(err));
-            error_report_err(err);
-            object_unref(OBJECT(s->csocket));
-            s->csocket = NULL;
-            return;
-        }
-
-        /* Register read callback */
-        qio_channel_add_watch(ioc, G_IO_IN, vul_fpga_socket_watch_cb, s, NULL);
-        break;
+        vul_fpga_socket_client_close(s);
+        return;
     }
 }
 
-static uint32_t vul_fpga_buffer_read(VulFPGABUF *buffer, uint8_t address)
+static void vul_fpga_process_ctrl_tx(VulFPGABUF *buf)
+{
+    char out_buf[VUL_FPGA_HDR_SIZE + VUL_FPGABUF_BUFFER_SIZE] = { 0 };
+    char *out_data = out_buf;
+    VulFPGAState *s = (VulFPGAState *)buf->state;
+    VulFPGAHDR vulfpgahdr;
+    uint16_t out_buf_off = 0;
+
+    vulfpgahdr.opcode = buf->tx.regs.opcode;
+    vulfpgahdr.data_size = VUL_FPGABUF_BUFFER_SIZE;
+    memcpy(out_data, (const char *)&vulfpgahdr, VUL_FPGA_HDR_SIZE);
+    out_data = out_buf + VUL_FPGA_HDR_SIZE;
+
+    buf->tx.regs.ctrl = 0;
+    memcpy(out_data, &buf->tx.regs, sizeof(VulFPGABUFRegs));
+    while(fifo8_is_empty(&buf->tx.fifo) != true) {
+        out_data[sizeof(VulFPGABUFRegs) + out_buf_off] = fifo8_pop(&buf->tx.fifo);
+        out_buf_off++;
+    }
+    buf->tx.regs.status &= ~STATUS_FULL_MASK;
+    buf->tx.regs.status &= ~STATUS_OVERFLOW_MASK;
+    buf->tx.regs.status |= STATUS_EMPTY_MASK;
+    buf->tx.regs.length = 0;
+    vul_fpga_socket_send(s, out_buf, sizeof(out_buf));
+}
+
+static void vul_fpga_process_ctrl_rx(VulFPGABUF *buf)
+{
+    char out_buf[VUL_FPGA_HDR_SIZE + VUL_FPGABUF_BUFFER_SIZE] = { 0 };
+    char *out_data = out_buf;
+    VulFPGAState *s = (VulFPGAState *)buf->state;
+    VulFPGAHDR vulfpgahdr;
+    uint16_t out_buf_off = 0;
+
+    vulfpgahdr.opcode = buf->tx.regs.opcode;
+    vulfpgahdr.data_size = VUL_FPGABUF_BUFFER_SIZE;
+    memcpy(out_data, (const char *)&vulfpgahdr, VUL_FPGA_HDR_SIZE);
+    out_data = out_buf + VUL_FPGA_HDR_SIZE;
+
+    buf->rx.regs.ctrl = 0;
+    memcpy(out_data, &buf->rx.regs, sizeof(VulFPGABUFRegs));
+    while(fifo8_is_empty(&buf->rx.fifo) != true) {
+        out_data[sizeof(VulFPGABUFRegs) + out_buf_off] = fifo8_pop(&buf->rx.fifo);
+        out_buf_off++;
+    }
+    buf->rx.regs.status &= ~STATUS_FULL_MASK;
+    buf->rx.regs.status &= ~STATUS_OVERFLOW_MASK;
+    buf->rx.regs.status |= STATUS_EMPTY_MASK;
+    buf->rx.regs.length = 0;
+    vul_fpga_socket_send(s, out_buf, sizeof(out_buf));
+}
+
+static uint32_t vul_fpga_buffer_read(VulFPGAState *s)
 {
     uint32_t value = 0xFFFFFFFF;
+    uint8_t address = s->command.address;
+    uint8_t opcode = s->command.opcode;
+
+    VulFPGABUF *buffer = vul_fpga_get_buffer(s, opcode);
+    if (buffer == NULL) {
+        qemu_log("VulFPGA: Invalid buffer for opcode 0x%02X\n", opcode);
+        return 0xFFFFFFFF;
+    }
 
     switch (address) {
     case VUL_FPGA_REG_ADDR_DATA:
-        if (buffer->dir != VUL_FPGABUF_DIR_FROM_FPGA) {
-            qemu_log("VulFPGA: Attempt to read from a TO_FPGA buffer\n");
-            break;
-        }
-        if ((buffer->regs.status & STATUS_OWNER_MASK) != STATUS_OWNER_CLIENT) {
+        if ((buffer->rx.regs.status & STATUS_OWNER_MASK) != STATUS_OWNER_CLIENT) {
             /* Client owns the buffer, server cannot read */
             qemu_log("VulFPGA: Client owns the buffer, server cannot read\n");
             break;
         }
-        if (buffer->regs.status & STATUS_UNDERRUN_MASK) {
+        if (buffer->rx.regs.status & STATUS_UNDERRUN_MASK) {
             /* Underrun already detected, cannot read more */
             qemu_log("VulFPGA: Underrun already detected, cannot read more\n");
             break;
         }
-        if (buffer->regs.status & STATUS_EMPTY_MASK) {
+        if (buffer->rx.regs.status & STATUS_EMPTY_MASK) {
             /* Buffer empty, cannot read */
-            buffer->regs.status |= STATUS_UNDERRUN_MASK;
+            buffer->rx.regs.status |= STATUS_UNDERRUN_MASK;
             qemu_log("VulFPGA: Underrun detected\n");
             break;
         }
-        value = (uint32_t)fifo8_pop(&buffer->fifo);
-        if (fifo8_is_empty(&buffer->fifo)) {
-            buffer->regs.status |= STATUS_EMPTY_MASK;
+        value = (uint32_t)fifo8_pop(&buffer->rx.fifo);
+        if (fifo8_is_empty(&buffer->rx.fifo)) {
+            buffer->rx.regs.status |= STATUS_EMPTY_MASK;
         }
-        buffer->regs.length = fifo8_num_used(&buffer->fifo);
+        buffer->rx.regs.length = fifo8_num_used(&buffer->rx.fifo);
         break;
     case VUL_FPGA_REG_ADDR_SIZE:
-        value = (uint32_t)buffer->regs.size;
+        value = (uint32_t)buffer->tx.regs.size;
+        if (s->command.dummy_data_count == 2) {
+            value = value >> 8;
+        }
         break;
     case VUL_FPGA_REG_ADDR_LENGTH:
-        value = (uint32_t)buffer->regs.length;
+        value = (uint32_t)buffer->tx.regs.length;
+        if (s->command.dummy_data_count == 2) {
+            value = value >> 8;
+        }
         break;
     case VUL_FPGA_REG_ADDR_CTRL:
-        value = (uint32_t)buffer->regs.ctrl;
+        value = (uint32_t)buffer->tx.regs.ctrl;
         break;
     case VUL_FPGA_REG_ADDR_STATUS:
-        value = (uint32_t)buffer->regs.status;
+        value = (uint32_t)buffer->rx.regs.status;
+        break;
+    case VUL_FPGA_REG_ADDR_LENGTH_SHADOW:
+        value = (uint32_t)buffer->rx.regs.length;
+        if (s->command.dummy_data_count == 2) {
+            value = value >> 8;
+        }
+        break;
+    case VUL_FPGA_REG_ADDR_CTRL_SHADOW:
+        value = (uint32_t)buffer->rx.regs.ctrl;
+        break;
+    case VUL_FPGA_REG_ADDR_STATUS_SHADOW:
+        value = (uint32_t)buffer->tx.regs.status;
         break;
     default:
         /* invalid address */
-        qemu_log("VulFPGA: Invalid address in vul_fpga_read_buffer\n");
+        qemu_log("VulFPGA: Invalid address (%u) in vul_fpga_read_buffer\n", address);
         break;
     }
 
     return value;
 }
 
-static uint32_t vul_fpga_buffer_write(VulFPGABUF *buffer, uint8_t address, uint8_t data)
+static uint32_t vul_fpga_buffer_write(VulFPGAState *s)
 {
     uint32_t ret = 0xFFFFFFFF;
+    uint8_t address = s->command.address;
+    uint8_t opcode = s->command.opcode;
+    uint8_t data = s->command.data;
+
+    VulFPGABUF *buffer = vul_fpga_get_buffer(s, opcode);
+    if (buffer == NULL) {
+        qemu_log("VulFPGA: Invalid buffer for opcode 0x%02X\n", opcode);
+        return 0xFFFFFFFF;
+    }
 
     switch (address) {
     case VUL_FPGA_REG_ADDR_DATA:
-        if (buffer->dir != VUL_FPGABUF_DIR_TO_FPGA) {
-            qemu_log("VulFPGA: Attempt to write to a FROM_FPGA buffer\n");
-            break;
-        }
-        if ((buffer->regs.status & STATUS_OWNER_MASK) != STATUS_OWNER_SERVER) {
+        if ((buffer->tx.regs.status & STATUS_OWNER_MASK) != STATUS_OWNER_SERVER) {
             /* Client owns the buffer, server cannot write */
             qemu_log("VulFPGA: Client owns the buffer, server cannot write\n");
             break;
         }
-        if (buffer->regs.status & STATUS_OVERFLOW_MASK) {
+        if (buffer->tx.regs.status & STATUS_OVERFLOW_MASK) {
             /* Overflow already detected, cannot write more */
             qemu_log("VulFPGA: Overflow already detected, cannot write more\n");
             break;
         }
-        if (buffer->regs.status & STATUS_FULL_MASK) {
-            buffer->regs.status |= STATUS_OVERFLOW_MASK;
+        if (buffer->tx.regs.status & STATUS_FULL_MASK) {
+            buffer->tx.regs.status |= STATUS_OVERFLOW_MASK;
             qemu_log("VulFPGA: Overflow detected\n");
             break;
         }
-        fifo8_push(&buffer->fifo, data);
-        buffer->regs.length = fifo8_num_used(&buffer->fifo);
-        if (fifo8_is_full(&buffer->fifo)) {
-            buffer->regs.status |= STATUS_FULL_MASK;
+        fifo8_push(&buffer->tx.fifo, data);
+        buffer->tx.regs.length = fifo8_num_used(&buffer->tx.fifo);
+        if (fifo8_is_full(&buffer->tx.fifo)) {
+            buffer->tx.regs.status |= STATUS_FULL_MASK;
+        }
+        ret = 0;
+        break;
+    case VUL_FPGA_REG_ADDR_CTRL:
+        if (data & CTRL_ABORT_MASK) {
+            buffer->tx.regs.length = 0;
+            buffer->tx.regs.ctrl = 0;
+            buffer->tx.regs.status = 0;
+            fifo8_reset(&buffer->tx.fifo);
+        } else if (data & CTRL_DONE_MASK) {
+            buffer->tx.regs.ctrl = CTRL_DONE_OK;
+
+            /* Server finished writing data to FPGA, now FPGA (client) owns the buffer */
+            buffer->tx.regs.status &= ~STATUS_OWNER_MASK;
+            buffer->tx.regs.status |= STATUS_OWNER_CLIENT;
+
+            vul_fpga_process_ctrl_tx(buffer);
+        }
+        ret = 0;
+        break;
+    case VUL_FPGA_REG_ADDR_CTRL_SHADOW:
+        if (data & CTRL_ABORT_MASK) {
+            buffer->rx.regs.length = 0;
+            buffer->rx.regs.ctrl = 0;
+            buffer->rx.regs.status = 0;
+            fifo8_reset(&buffer->rx.fifo);
+        } else if (data & CTRL_DONE_MASK) {
+            buffer->rx.regs.ctrl = CTRL_DONE_OK;
+
+            /* Server finished reading data from FPGA, now server owns the buffer */
+            buffer->rx.regs.status &= ~STATUS_OWNER_MASK;
+            buffer->rx.regs.status |= STATUS_OWNER_SERVER;
+
+            vul_fpga_process_ctrl_rx(buffer);
         }
         ret = 0;
         break;
     case VUL_FPGA_REG_ADDR_SIZE:
     case VUL_FPGA_REG_ADDR_LENGTH:
-        /* Read only register. Shouldn't come here */
-        break;
-    case VUL_FPGA_REG_ADDR_CTRL:
-        assert(sizeof(uint8_t) == 1);
-        if (data & CTRL_ABORT_MASK) {
-            buffer->regs.length = 0;
-            buffer->regs.ctrl = 0;
-            buffer->regs.status = 0;
-            fifo8_reset(&buffer->fifo);
-        } else if (data & CTRL_DONE_MASK) {
-            buffer->regs.ctrl = CTRL_DONE_OK;
-            if (buffer->dir == VUL_FPGABUF_DIR_TO_FPGA) {
-                /* Server finished writing data to FPGA, now FPGA (client) owns the buffer */
-                buffer->regs.status &= ~STATUS_OWNER_MASK;
-                buffer->regs.status |= STATUS_OWNER_CLIENT;
-            } else if (buffer->dir == VUL_FPGABUF_DIR_FROM_FPGA) {
-                /* Server finished reading data from FPGA, now server owns the buffer again */
-                buffer->regs.status &= ~STATUS_OWNER_MASK;
-                buffer->regs.status |= STATUS_OWNER_SERVER;
-            } else {
-                qemu_log("VulFPGA: Invalid buffer direction in DONE command\n");
-                break;
-            }
-        }
-        vul_fpga_process_ctrl(buffer);
-        ret = 0;
-        break;
     case VUL_FPGA_REG_ADDR_STATUS:
+    case VUL_FPGA_REG_ADDR_LENGTH_SHADOW:
+    case VUL_FPGA_REG_ADDR_STATUS_SHADOW:
         /* Read only register. Shouldn't come here */
         break;
     default:
@@ -627,8 +544,6 @@ static int vul_fpga_process_fru_read(VulFPGAState *s)
 
 static uint32_t vul_fpga_process_write(VulFPGAState *s)
 {
-    VulFPGABUF *buf;
-    uint8_t address = s->command.address;
     uint8_t opcode = VUL_FPGA_COMMAND_OPCODE(s->command.opcode);
     if (opcode >= VUL_FPGA_OP_MAX) {
         qemu_log("VulFPGA: Invalid command opcode: 0x%02X\n", opcode);
@@ -642,27 +557,15 @@ static uint32_t vul_fpga_process_write(VulFPGAState *s)
     case VUL_FPGA_OP_FRU_WRITE:
         vul_fpga_process_fru_write(s);
         break;
-    case VUL_FPGA_OP_REG_READ:
+    case VUL_FPGA_OP_MCTP_WRITE:
+    case VUL_FPGA_OP_CMD_WRITE:
+        return vul_fpga_buffer_write(s);
     case VUL_FPGA_OP_J2C_WRITE:
-    case VUL_FPGA_OP_J2C_READ:
     case VUL_FPGA_OP_UART_WRITE:
-    case VUL_FPGA_OP_UART_READ:
-    case VUL_FPGA_OP_FRU_READ:
     case VUL_FPGA_OP_RAS_WRITE:
-    case VUL_FPGA_OP_RAS_READ:
         /* Not implemented yet */
         qemu_log("VulFPGA:%s Command opcode 0x%02X not implemented yet\n", __func__,opcode);
         break;
-    case VUL_FPGA_OP_MCTP_WRITE:
-    case VUL_FPGA_OP_MCTP_READ:
-    case VUL_FPGA_OP_CMD_WRITE:
-    case VUL_FPGA_OP_CMD_READ:
-        buf = &s->buffers[opcode];
-        if (address > VUL_FPGA_REG_ADDR_STATUS) {
-            qemu_log("VulFPGA: Invalid buffer register address: 0x%02X\n", address);
-            return 0xFFFFFFFF;
-        }
-        return vul_fpga_buffer_write(buf, address, s->command.data);
     default:
         qemu_log("VulFPGA: Invalid command opcode in vul_fpga_process_write: 0x%02X\n", opcode);
         break;
@@ -673,8 +576,6 @@ static uint32_t vul_fpga_process_write(VulFPGAState *s)
 
 static uint32_t vul_fpga_process_read(VulFPGAState *s)
 {
-    VulFPGABUF *buf;
-    uint8_t address = s->command.address;
     uint8_t opcode = VUL_FPGA_COMMAND_OPCODE(s->command.opcode);
     if (opcode >= VUL_FPGA_OP_MAX) {
         qemu_log("VulFPGA: Invalid command opcode: 0x%02X\n", opcode);
@@ -688,68 +589,21 @@ static uint32_t vul_fpga_process_read(VulFPGAState *s)
     case VUL_FPGA_OP_FRU_READ:
         return vul_fpga_process_fru_read(s);
         break;
-    case VUL_FPGA_OP_REG_WRITE:
-    case VUL_FPGA_OP_J2C_WRITE:
+    case VUL_FPGA_OP_MCTP_READ:
+    case VUL_FPGA_OP_CMD_READ:
+        return vul_fpga_buffer_read(s);
     case VUL_FPGA_OP_J2C_READ:
-    case VUL_FPGA_OP_UART_WRITE:
     case VUL_FPGA_OP_UART_READ:
-    case VUL_FPGA_OP_FRU_WRITE:
-    case VUL_FPGA_OP_RAS_WRITE:
     case VUL_FPGA_OP_RAS_READ:
         /* Not implemented yet */
         qemu_log("VulFPGA:%s Command opcode 0x%02X not implemented yet\n", __func__,opcode);
         break;
-    case VUL_FPGA_OP_MCTP_WRITE:
-    case VUL_FPGA_OP_MCTP_READ:
-    case VUL_FPGA_OP_CMD_WRITE:
-    case VUL_FPGA_OP_CMD_READ:
-        buf = &s->buffers[opcode];
-        if (address > VUL_FPGA_REG_ADDR_STATUS) {
-            qemu_log("VulFPGA: Invalid buffer register address: 0x%02X\n", address);
-            return 0xFFFFFFFF;
-        }
-
-        return vul_fpga_buffer_read(buf, address);
     default:
         qemu_log("VulFPGA: Invalid command opcode in vul_fpga_process_read: 0x%02X\n", opcode);
         break;
     }
 
     return 0xFFFFFFFF;
-}
-
-static uint32_t vul_fpga_process_fifo_command(VulFPGAState *s)
-{
-    uint32_t ret = 0xFFFFFFFF;
-    uint8_t opcode = s->command.opcode;
-    uint16_t address = s->command.address;
-    uint8_t data = s->command.data;
-
-    if (data == 0) {
-        if (vul_fpga_is_dummy_data_valid(opcode, address)) {
-            /* write operation */
-            ret = vul_fpga_process_write(s);
-        } else {
-            /* read operation */
-            s->command.dummy_data_count++;
-            if (s->command.dummy_data_count == 1) {
-                /* ignore first dummy byte */
-                return 0;
-            }
-            ret = vul_fpga_process_read(s);
-            if (vul_fpga_is_read16_address(address) &&
-                s->command.dummy_data_count == 3) {
-                /* second byte of 16-bit read */
-                ret = ret >> 8;
-            }
-            ret = ret & 0xFF;
-        }
-    } else {
-        /* write operation */
-        ret = vul_fpga_process_write(s);
-    }
-
-    return ret;
 }
 
 static uint32_t vul_fpga_transfer(SSIPeripheral *ss, uint32_t data)
@@ -782,34 +636,26 @@ static uint32_t vul_fpga_transfer(SSIPeripheral *ss, uint32_t data)
          ret = 0;
         break;
     case VUL_FPGA_CMD_STATE_DATA:
-        switch (s->command.opcode) {
-        case VUL_FPGA_OP_MCTP_WRITE:
-        case VUL_FPGA_OP_MCTP_READ:
-        case VUL_FPGA_OP_CMD_WRITE:
-        case VUL_FPGA_OP_CMD_READ:
-            s->command.data = (data & 0xFF);
-            ret = vul_fpga_process_fifo_command(s);
-            break;
-        case VUL_FPGA_OP_FRU_WRITE:
-        case VUL_FPGA_OP_REG_WRITE:
-            s->command.data = data & 0xFF;
+        s->command.data = (data & 0xFF);
+        if (vul_fpga_is_write_opcode(s->command.opcode)) {
             ret = vul_fpga_process_write(s);
-            s->command.address += 1;
-            break;
-        case VUL_FPGA_OP_FRU_READ:
-        case VUL_FPGA_OP_REG_READ:
-            /* first read byte is dummy return 0*/
-           if (s->command.dummy_data_count == 0) {
-              s->command.dummy_data_count = 1;
-              ret = 0;
-            } else {
-              ret = vul_fpga_process_read(s);
-              ret = ret & 0xFF;
-              s->command.address += 1;
+        } else if (vul_fpga_is_read_opcode(s->command.opcode)) {
+            if (s->command.data) {
+                qemu_log("VulFPGA: Invalid data byte for read operation: 0x%02X\n", s->command.data);
+                return 0xFFFFFFFF;
             }
-            break;
-        default :
-            qemu_log("VulFPGA: Invalid opcode 0x%x\n", s->command.opcode);
+
+            s->command.dummy_data_count++;
+            if (s->command.dummy_data_count == 1) {
+                /* ignore first dummy byte */
+                return 0;
+            }
+            ret = vul_fpga_process_read(s);
+            ret = ret & 0xFF;
+        }
+        // Advance address for next data byte if not a FIFO command
+        if (!vul_fpga_fifo_command(s->command.opcode)) {
+            s->command.address += 1;
         }
         break;  // break of DATA-STATE
     default:
@@ -837,6 +683,109 @@ static int vul_fpga_set_cs(SSIPeripheral *ss, bool select)
     return 0;
 }
 
+static void vul_fpga_socket_cb(QIONetListener *listener, QIOChannelSocket *sioc, gpointer data)
+{
+    VulFPGAState *s = (VulFPGAState *)data;
+    Error *err = NULL;
+
+    object_ref(OBJECT(sioc));
+    s->csocket = sioc;
+    QIOChannel *ioc = QIO_CHANNEL(sioc);
+    if (!ioc) {
+        qemu_log("VulFPGA: Failed to get QIOChannel from QIOChannelSocket\n");
+        object_unref(OBJECT(sioc));
+        return;
+    }
+    /* Set the socket to non-blocking mode.
+     * If we don't do this, QEMU execution will stall until we get some data, which may be never
+     */
+    qio_channel_set_blocking(ioc, false, &err);
+    if (err) {
+        error_report_err(err);
+        object_unref(OBJECT(sioc));
+        return;
+    }
+    qemu_log("Client connected to VulFPGA socket\n");
+
+    /* Register read callback */
+    qio_channel_add_watch(ioc, G_IO_IN, vul_fpga_socket_watch_cb, s, NULL);
+}
+
+static void vul_fpga_socket_setup(VulFPGAState *s, Error **errp)
+{
+    Error *err = NULL;
+
+    s->laddr = socket_parse(s->laddr_str, &err);
+    if (err) {
+        error_propagate(errp, err);
+        return;
+    }
+    s->lsocket = qio_net_listener_new();
+    assert(s->lsocket);
+    qio_net_listener_set_client_func(s->lsocket,
+                                     vul_fpga_socket_cb,
+                                     s,
+                                     NULL);
+    qio_net_listener_open_sync(s->lsocket, s->laddr, LISTENER_BACKLOG, &err);
+    if (err) {
+        error_propagate(errp, err);
+    }
+}
+
+static void vul_fpga_socket_connect(VulFPGAState *s, Error **errp)
+{
+    Error *err = NULL;
+
+    if (s->csocket) {
+        /* already connected */
+        return;
+    }
+
+    s->laddr = socket_parse(s->laddr_str, &err);
+    if (err) {
+        error_propagate(errp, err);
+        return;
+    }
+
+    for (;;) {
+        s->csocket = qio_channel_socket_new();
+        assert(s->csocket);
+        QIOChannel *ioc = QIO_CHANNEL(s->csocket);
+        if (!ioc) {
+            qemu_log("VulFPGA: Failed to get QIOChannel from QIOChannelSocket\n");
+            object_unref(OBJECT(s->csocket));
+            s->csocket = NULL;
+            return;
+        }
+
+        qio_channel_socket_connect_sync(s->csocket, s->laddr, &err);
+        if (err) {
+            qemu_log("VulFPGA: Socket connection failed: %s\n", error_get_pretty(err));
+            error_report_err(err);
+            object_unref(OBJECT(s->csocket));
+            s->csocket = NULL;
+            /* Retry connection after a short delay */
+            g_usleep(500000); // 500 ms
+            err = NULL;
+            continue;
+        }
+
+        /* Success: now switch to non-blocking and install watch */
+        qio_channel_set_blocking(ioc, false, &err);
+        if (err) {
+            qemu_log("VulFPGA: Failed to set non-blocking mode: %s\n", error_get_pretty(err));
+            error_report_err(err);
+            object_unref(OBJECT(s->csocket));
+            s->csocket = NULL;
+            return;
+        }
+
+        /* Register read callback */
+        qio_channel_add_watch(ioc, G_IO_IN, vul_fpga_socket_watch_cb, s, NULL);
+        break;
+    }
+}
+
 static void vul_fpga_realize(SSIPeripheral *ss, Error **errp)
 {
     VulFPGAState *s = VUL_FPGA(ss);
@@ -849,7 +798,8 @@ static void vul_fpga_realize(SSIPeripheral *ss, Error **errp)
     for (i = 0; i < s->num_buf; i++) {
         VulFPGABUF *buf = &s->buffers[i];
 
-        fifo8_create(&buf->fifo, s->buffers[i].regs.size);
+        fifo8_create(&buf->tx.fifo, s->buffers[i].tx.regs.size);
+        fifo8_create(&buf->rx.fifo, s->buffers[i].rx.regs.size);
 
         buf->state = (void *)s;
     }
@@ -899,7 +849,8 @@ static void vul_fpga_unrealize(DeviceState *dev)
 
     for(uint8_t i = 0; i < s->num_buf; i++) {
         VulFPGABUF *buf = &s->buffers[i];
-        fifo8_destroy(&buf->fifo);
+        fifo8_destroy(&buf->tx.fifo);
+        fifo8_destroy(&buf->rx.fifo);
     }
 }
 
@@ -910,7 +861,8 @@ static void vul_fpga_reset(DeviceState *dev)
 
     for (i = 0; i < s->num_buf; i++) {
         VulFPGABUF *buf = &s->buffers[i];
-        fifo8_reset(&buf->fifo);
+        fifo8_reset(&buf->tx.fifo);
+        fifo8_reset(&buf->rx.fifo);
     }
 
     vul_fpga_socket_client_close(s);

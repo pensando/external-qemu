@@ -160,4 +160,18 @@ typedef struct VulFPGAState {
     QIOChannelSocket *csocket;
 } VulFPGAState;
 
+inline static VulFPGABUF *vul_fpga_get_buffer(VulFPGAState *s, uint8_t opcode)
+{
+    switch (opcode) {
+        case VUL_FPGA_OP_MCTP_WRITE:
+        case VUL_FPGA_OP_MCTP_READ:
+            return &s->buffers[VUL_FPGABUF_MCTP];
+        case VUL_FPGA_OP_CMD_WRITE:
+        case VUL_FPGA_OP_CMD_READ:
+            return &s->buffers[VUL_FPGABUF_CMD];
+        default:
+            return NULL;
+    }
+}
+
 DeviceState *vul_fpga_create(char *sock, bool is_server, bool is_soc);
