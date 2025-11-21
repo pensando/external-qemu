@@ -25,6 +25,7 @@
 #include "hw/block/flash.h"
 #include "hw/ssi/sifive_spi.h"
 #include "hw/misc/vul_fpga.h"
+#include "hw/watchdog/cmsdk-apb-watchdog.h"
 
 #define VUL_MODEL_CPUS_MAX_BITS             9
 #define VUL_MODEL_CPUS_MAX                  (1 << VUL_MODEL_CPUS_MAX_BITS)
@@ -56,6 +57,7 @@ struct RISCVVulModelState {
     PFlashCFI01 *flash;
     SiFiveSPIState *spi0;
     PFlashCFI01 *test_flash;
+    CMSDKAPBWatchdog *wdt0;
 
     int fdt_size;
     bool have_aclint;
@@ -93,6 +95,7 @@ enum {
     VUL_MODEL_ACC,
     VUL_MODEL_MCTP_SOCKDMA,
     VUL_MODEL_SPI0,
+    VUL_MODEL_WDT0,
 };
 
 enum {

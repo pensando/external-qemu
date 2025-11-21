@@ -55,6 +55,11 @@
 #include "hw/misc/sockdma.h"
 #include "hw/misc/vul_fpga.h"
 #include "hw/ssi/ssi.h"
+#include "hw/watchdog/cmsdk-apb-watchdog.h"
+#include "exec/address-spaces.h"
+#include "hw/clock.h"
+#include "hw/qdev-clock.h"
+#include "libfdt.h"
 #include "vul_zmq.h"
 
 /*
@@ -87,6 +92,7 @@ static bool vul_model_use_kvm_aia(RISCVVulModelState *s)
 
 static const MemMapEntry vul_model_memmap[] = {
     [VUL_MODEL_MROM] =         {      0x1000,       0xf000 }, /* not really in our model, but QEMU wants it for booting */
+    [VUL_MODEL_WDT0] =         {     0x50000,       0x1000},
     [VUL_MODEL_SPI0] =         {     0xb0000,        0x100 },
     [VUL_MODEL_UART0] =        {     0xf0000,        0x100 },
     [VUL_MODEL_ACC] =          {    0x200000,     0x100000 },
@@ -710,6 +716,7 @@ static void create_fdt_uart(RISCVVulModelState *s, const MemMapEntry *memmap,
     g_free(name);
 }
 
+
 static void create_fdt_flash(RISCVVulModelState *s, const MemMapEntry *memmap)
 {
     char *name;
@@ -740,6 +747,30 @@ static void create_fdt_test_flash(RISCVVulModelState *s, const MemMapEntry *memm
                                  2, flashbase, 2, flashsize);
     qemu_fdt_setprop_cell(ms->fdt, name, "bank-width", 4);
     g_free(name);
+}
+
+#define VUL_APB_WDT_IRQ   17
+static void create_cmsdk_apb_wdt_fdt(RISCVVulModelState *s, const MemMapEntry *memmap)
+{
+    char *node_path;
+    MachineState *ms = MACHINE(s);
+    hwaddr base = vul_model_memmap[VUL_MODEL_WDT0].base;
+    hwaddr size = vul_model_memmap[VUL_MODEL_WDT0].size;
+    uint32_t reg[2] = {
+        cpu_to_fdt32((uint32_t)base),
+        cpu_to_fdt32((uint32_t)size)
+    };
+    uint32_t ints[1] = { cpu_to_fdt32(VUL_APB_WDT_IRQ) };
+
+    /* Create the subnode: /soc/gpio@d0000 */
+    node_path = g_strdup_printf("/soc/wdt0@%" PRIx64, base);
+    qemu_fdt_add_subnode(ms->fdt, node_path);
+    qemu_fdt_setprop_string(ms->fdt, node_path, "compatible", "arm,cmsdk-watchdog");
+    qemu_fdt_setprop(ms->fdt, node_path, "reg", reg, sizeof(reg));
+    qemu_fdt_setprop(ms->fdt, node_path, "interrupts", ints, sizeof(ints));
+    //fdt_setprop_string(fdt, node, "label", "WDT_0");
+    qemu_fdt_setprop_string(ms->fdt, node_path, "status", "okay");
+    g_free(node_path);	
 }
 
 static void finalize_fdt(RISCVVulModelState *s)
@@ -786,6 +817,7 @@ static void create_fdt(RISCVVulModelState *s, const MemMapEntry *memmap)
     create_fdt_test_flash(s, memmap);
 
     create_fdt_pmu(s);
+    create_cmsdk_apb_wdt_fdt(s, memmap);
 }
 
 static DeviceState *vul_model_create_aia(RISCVVulModelAIAType aia_type, int aia_guests,
@@ -927,6 +959,35 @@ static void add_memory_aliasing(RISCVVulModelState *s, MemoryRegion *orig_region
     memory_region_init_alias(llc_alias, NULL, name, orig_region, 0, entry->size - s->nicram_size);
     memory_region_add_subregion(system_memory, entry->base + s->nicram_size, llc_alias);
     vul_mem_add_alias(s->vul_mem, entry->base, system_memory);
+}
+
+static CMSDKAPBWatchdog* cmsdk_apb_wdt_create (MachineState *machine, hwaddr addr,DeviceState *mmio_irqchip)
+{
+    DeviceState *dev;
+    SysBusDevice *s;
+    qemu_irq irq;
+    CMSDKAPBWatchdog *wdt0;
+    Clock *wdogclk;
+
+    /* Create a clock source (e.g., 50 MHz) */
+    wdogclk = clock_new(OBJECT(machine), "wdogclk");
+    clock_set_hz(wdogclk, 50 * 1000 * 1000); /* 50 MHz */
+
+    /* Create cmsdk-apb-watchdog device */
+    dev = qdev_new(TYPE_CMSDK_APB_WATCHDOG);
+    s = SYS_BUS_DEVICE(dev);
+    /* Connect clock */
+    qdev_connect_clock_in(dev, "WDOGCLK", wdogclk);
+    sysbus_realize_and_unref(s, &error_fatal);
+    /* Map MMIO */
+    sysbus_mmio_map(s, 0, addr);
+
+    /* Connect interrupt line */
+    irq = qdev_get_gpio_in(mmio_irqchip, VUL_APB_WDT_IRQ);
+    sysbus_connect_irq(s, 0, irq);
+    
+    wdt0 = CMSDK_APB_WATCHDOG(dev);
+    return wdt0;
 }
 
 static SiFiveSPIState *sifive_spi0_create(hwaddr addr, char *sock, bool is_server, bool is_soc)
@@ -1093,6 +1154,9 @@ static void vul_model_machine_init(MachineState *machine)
 
     /* Create SPI0 device and populate its peripherals */
     s->spi0 = sifive_spi0_create(memmap[VUL_MODEL_SPI0].base, s->fpga_emu_sock, s->fpga_emu_is_server, s->is_soc);
+
+    /* Create Wdt0 */
+    s->wdt0 = cmsdk_apb_wdt_create(machine, memmap[VUL_MODEL_WDT0].base, mmio_irqchip); 
 
     serial_mm_init(system_memory, memmap[VUL_MODEL_UART0].base,
                    VUL_MODEL_UART0_REG_SHIFT, qdev_get_gpio_in(mmio_irqchip, UART0_IRQ), 399193,
