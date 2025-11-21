@@ -313,7 +313,7 @@ static uint32_t vul_fpga_buffer_read(VulFPGAState *s)
         value = (uint32_t)buffer->tx.regs.ctrl;
         break;
     case VUL_FPGA_REG_ADDR_STATUS:
-        value = (uint32_t)buffer->rx.regs.status;
+        value = (uint32_t)buffer->tx.regs.status;
         break;
     case VUL_FPGA_REG_ADDR_LENGTH_SHADOW:
         value = (uint32_t)buffer->rx.regs.length;
@@ -325,7 +325,7 @@ static uint32_t vul_fpga_buffer_read(VulFPGAState *s)
         value = (uint32_t)buffer->rx.regs.ctrl;
         break;
     case VUL_FPGA_REG_ADDR_STATUS_SHADOW:
-        value = (uint32_t)buffer->tx.regs.status;
+        value = (uint32_t)buffer->rx.regs.status;
         break;
     default:
         /* invalid address */
