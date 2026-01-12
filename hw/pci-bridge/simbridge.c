@@ -93,6 +93,10 @@ static QemuMutex simdevices_lock;
 
 #define TYPE_SIM_DEVICE_VF "simdevice_vf"
 
+// HACK: model doesn't pass BDF to us and needs fixing, just route everything
+// thought the last registered function for now
+static uint16_t last_bdf;
+
 static int
 dbgprintf_is_enabled(void)
 {
@@ -633,6 +637,7 @@ static SimDevice *simbridge_register_dev(SimBridgeDn *sbdn, int simbdf)
 
     sd->sb = sbdn->sb;
     sd->simbdf = simbdf;
+    last_bdf = simbdf;
 
     snprintf(name, sizeof(name), "simdevice-%04x", simbdf);
     qdev_set_id(dev, strdup(name), &err);
@@ -847,7 +852,7 @@ static void simbridgedn_class_init(ObjectClass *oc, const void *data)
 static int
 process_memrd(int fd, simmsg_t *m)
 {
-    const u_int16_t bdf = m->u.read.bdf;
+    u_int16_t bdf = m->u.read.bdf;
     const u_int64_t addr = m->u.read.addr;
     const u_int32_t size = m->u.read.size;
     char buf[4096];
@@ -859,6 +864,10 @@ process_memrd(int fd, simmsg_t *m)
         dbgprintf("process_memrd: read size too large: 0x%x\n", size);
         simc_readres(bdf, addr, size, NULL, E2BIG);
         return -1;
+    }
+
+    if (!bdf) {
+        bdf = last_bdf;
     }
 
     if (bdf) {
@@ -893,7 +902,7 @@ process_memrd(int fd, simmsg_t *m)
 static void
 process_memwr(int fd, simmsg_t *m)
 {
-    const u_int16_t bdf  = m->u.write.bdf;
+    u_int16_t bdf  = m->u.write.bdf;
     const u_int64_t addr = m->u.write.addr;
     const u_int32_t size = m->u.write.size;
     char buf[4096];
@@ -909,6 +918,10 @@ process_memwr(int fd, simmsg_t *m)
 
     simc_readn(buf, size);
     dbgprinthex(4, (u_int8_t *)buf, size);
+
+    if (!bdf) {
+        bdf = last_bdf;
+    }
 
     if (bdf) {
         SimDevice *sd;
@@ -934,7 +947,7 @@ process_memwr(int fd, simmsg_t *m)
 static int
 process_ats_translate(int fd, simmsg_t *m)
 {
-    const u_int16_t bdf  = m->u.ats_req.bdf;
+    u_int16_t bdf  = m->u.ats_req.bdf;
     const u_int64_t addr = m->u.ats_req.addr;
     const u_int32_t length = m->u.ats_req.length;
     const u_int32_t size = length * sizeof(uint64_t);
@@ -949,6 +962,10 @@ process_ats_translate(int fd, simmsg_t *m)
         dbgprintf("process_ats_translate: request size too large: 0x%x\n", size);
         simc_atsres(bdf, addr, size, NULL, E2BIG);
         return -1;
+    }
+
+    if (!bdf) {
+        bdf = last_bdf;
     }
 
     if (bdf) {
