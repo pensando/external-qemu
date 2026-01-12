@@ -43,6 +43,8 @@ typedef struct SimBridge {
     int chassis;
     int port;
     int slot;
+    bool deferred_scan;
+    bool pri_bus_written;
 } SimBridge;
 
 typedef struct SimBridgeDn {
@@ -92,6 +94,21 @@ static QemuMutex simdevices_lock;
     OBJECT_CHECK(SimDevice, (obj), TYPE_SIM_DEVICE)
 
 #define TYPE_SIM_DEVICE_VF "simdevice_vf"
+
+static int
+vulcano_type0_is_enabled(void)
+{
+    static int vulcano_type0_init;
+    static int vulcano_type0_enabled;
+
+    if (!vulcano_type0_init) {
+        vulcano_type0_init = 1;
+        if (getenv("SIMBRIDGE_VULCANO_TYPE0") != NULL) {
+            vulcano_type0_enabled = 1;
+        }
+    }
+    return vulcano_type0_enabled;
+}
 
 static int
 dbgprintf_is_enabled(void)
@@ -1020,9 +1037,64 @@ simbridge_read_msg(void *opaque)
 static void simbridge_write_config(PCIDevice *d,
                                    uint32_t address, uint32_t val, int len)
 {
+    if (vulcano_type0_is_enabled()) {
+        SimBridge *sb = SIM_BRIDGE(d);
+
+        /* (Note: yes, the fixed bdf here is ugly, but other parts of this code
+         * already assume that QEMU is configured to place this at 01:00.0.)
+         */
+        uint16_t bdf = bdf_make(1, 0, 0);
+        if (simc_cfgwr_type0(bdf, address, len, val) < 0) {
+            dbgprintf("simbridge_write_config(0x%04x, 0x%x, %d) = 0x%"PRIx32" failed\n",
+                      bdf, address, len, val);
+        } else {
+            dbgprintf("simbridge_write_config(0x%04x, 0x%x, %d) = 0x%"PRIx32"\n",
+                      bdf, address, len, val);
+        }
+
+        switch (address) {
+        case PCI_PRIMARY_BUS:
+            sb->pri_bus_written = true;
+            break;
+        case PCI_SECONDARY_BUS:
+            if (sb->deferred_scan && sb->pri_bus_written) {
+                dbgprintf("simbridge_write_config triggers deferred scan\n");
+                sb->deferred_scan = false;
+                simbridge_scan_devices(sb, NULL, 2);
+            }
+            break;
+        default:
+            break;
+        }
+    }
+
     pci_bridge_write_config(d, address, val, len);
     pcie_cap_flr_write_config(d, address, val, len);
     pcie_aer_write_config(d, address, val, len);
+}
+
+static uint32_t simbridge_read_config(PCIDevice *d, uint32_t address, int len)
+{
+    uint64_t val;
+
+    if (vulcano_type0_is_enabled()) {
+        /* (Note: yes, the fixed bdf here is ugly, but other parts of this code
+         * already assume that QEMU is configured to place this at 01:00.0.)
+         */
+        uint16_t bdf = bdf_make(1, 0, 0);
+        if (simc_cfgrd_type0(bdf, address, len, &val) == 0) {
+            dbgprintf("simbridge_read_config(0x%04x, 0x%x, %d) = 0x%"PRIx64"\n",
+                      bdf, address, len, val);
+        } else {
+            dbgprintf("simbridge_read_config(0x%04x, 0x%x, %d) failed\n",
+                      bdf, address, len);
+            val = 0xffffffff;
+        }
+    } else {
+        val = pci_default_read_config(d, address, len);
+    }
+
+    return val;
 }
 
 static void simbridge_reset(DeviceState *qdev)
@@ -1036,17 +1108,29 @@ static void simbridge_reset(DeviceState *qdev)
 static void simbridge_init(SimBridge *sb)
 {
     sb->chassis = 1;
+    sb->pri_bus_written = false;
     sb->simfd = simc_open("qemu", NULL, msg_handler);
     if (sb->simfd >= 0) {
-        /*
-         * We are taking the role of upstream port bridge in
-         * this simbridge device.
-         *
-         * qemu puts the simbridge device at 01:00.0.
-         *
-         * Start at bus 2 to align with qemu's bus numbering.
-         */
-        simbridge_scan_devices(sb, NULL, 2);
+        if (vulcano_type0_is_enabled()) {
+            /*
+             * We must wait until the primary and secondary bus have been
+             * assigned before scanning, because firmware needs to see those
+             * before it sees anything relating to the devices underneath.
+             */
+            dbgprintf("simbridge_init deferring scan (Vulcano type 0 mode)\n");
+            sb->deferred_scan = true;
+        } else {
+            /*
+             * We are taking the role of upstream port bridge in
+             * this simbridge device.
+             *
+             * qemu puts the simbridge device at 01:00.0.
+             *
+             * Start at bus 2 to align with qemu's bus numbering.
+             */
+            sb->deferred_scan = false;
+            simbridge_scan_devices(sb, NULL, 2);
+        }
 
         /*
          * Arrange for us to handle any unsolicited messages.
@@ -1164,6 +1248,7 @@ static void simbridge_class_init(ObjectClass *oc, void *data)
     HotplugHandlerClass *hc = HOTPLUG_HANDLER_CLASS(oc);
 
     pdc->config_write = simbridge_write_config;
+    pdc->config_read = simbridge_read_config;
     pdc->realize = simbridge_realizefn;
     pdc->exit = simbridge_exitfn;
     pdc->vendor_id = simbridge_vendor_id();
