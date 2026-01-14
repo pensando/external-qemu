@@ -282,6 +282,20 @@ static void simdevice_cfgwr(PCIDevice *pd,
     u_int64_t val = data;
 
     /*
+     * Plumb PCI_SRIOV_CTRL_MSE from PF to PCI_COMMAND_MEMORY in VF as a
+     * workaround for the lack of the corresponding logic in QEMU SR-IOV
+     * emulation layer. When it gets fixed there we should remove this.
+     */
+    if (pci_is_vf(pd) && addr == PCI_COMMAND) {
+        PCIDevice *pf = pd->exp.sriov_vf.pf;
+        uint16_t pf_ctrl = pci_get_word(pf->config + pf->exp.sriov_cap + PCI_SRIOV_CTRL);
+
+        if (pf_ctrl & PCI_SRIOV_CTRL_MSE)
+            data |= PCI_COMMAND_MEMORY;
+        else
+            data &= ~PCI_COMMAND_MEMORY;
+    }
+    /*
      * Send this write down to pci layer to update
      * bar addresses when they come.
      */
@@ -534,18 +548,24 @@ static void simdevice_realize(PCIDevice *pd, Error **errp)
 
         dbgprintf("%s: sriov_cap=%d total_vfs=%ld devid=0x%lx offset=%ld stride=%ld\n", __func__,
                   sriov_cap_offset, total_vfs, vf_dev_id, vf_offset, vf_stride);
-        pcie_sriov_pf_init(pd, sriov_cap_offset, TYPE_SIM_DEVICE_VF, vf_dev_id,
-                           total_vfs, total_vfs, vf_offset, vf_stride, errp);
 
         for (unsigned baridx = 0; baridx < 6; ++baridx) {
             u_int64_t offset = sriov_cap_offset + PCI_SRIOV_BAR + baridx * 4;
             BarProps props = query_bar(sd->simbdf, baridx, offset);
             if (props.size) {
                 sd->vf_bars[baridx] = props;
-                pcie_sriov_pf_init_vf_bar(pd, baridx, props.type, props.size);
                 if (props.type == PCI_BASE_ADDRESS_MEM_TYPE_64)
                     baridx += 1;
             }
+        }
+
+        pcie_sriov_pf_init(pd, sriov_cap_offset, TYPE_SIM_DEVICE_VF, vf_dev_id,
+                           total_vfs, total_vfs, vf_offset, vf_stride, errp);
+
+        for (unsigned baridx = 0; baridx < 6; ++baridx) {
+            BarProps props = sd->vf_bars[baridx];
+            if (props.size)
+                pcie_sriov_pf_init_vf_bar(pd, baridx, props.type, props.size);
         }
     }
 }
