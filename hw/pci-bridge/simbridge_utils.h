@@ -142,6 +142,7 @@ int simc_iord(u_int16_t bdf, u_int8_t bar,
               u_int16_t addr, u_int8_t size, u_int64_t *val);
 int simc_iowr(u_int16_t bdf, u_int8_t bar,
               u_int16_t addr, u_int8_t size, u_int64_t val);
+int simc_atsinv(u_int16_t bdf, u_int64_t addr);
 
 int simc_readres(u_int16_t bdf,
                  u_int64_t addr, u_int32_t size, void *buf, u_int8_t error);

@@ -474,6 +474,26 @@ simc_iowr(u_int16_t bdf, u_int8_t bar,
 }
 
 int
+simc_atsinv(u_int16_t bdf, u_int64_t addr)
+{
+    simclient_t *sc = &simclient;
+    int s = sc->s;
+    simmsg_t m = {
+        .msgtype = SIMMSG_ATS_INV,
+        .u.write.bdf = bdf,
+        .u.write.addr = addr,
+    };
+    int r;
+
+    if (!simclient.open) return -EBADF;
+
+    r = sim_writen(s, &m, sizeof(m));
+    if (r < 0) return r;
+
+    return sim_wait_for_resp(s, SIMMSG_ATS_INV_CPL, &m, sc->handler);
+}
+
+int
 simc_readres(u_int16_t bdf,
              u_int64_t addr, u_int32_t size, void *buf, u_int8_t error)
 {
