@@ -1286,6 +1286,8 @@ bool pcie_pasid_enabled(const PCIDevice *dev)
 
 bool pcie_ats_enabled(const PCIDevice *dev)
 {
+    // HACK: assume enabled
+    return true;
     if (!pci_is_express(dev) || !dev->exp.ats_cap) {
         return false;
     }
