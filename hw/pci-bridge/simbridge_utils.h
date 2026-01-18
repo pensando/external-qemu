@@ -19,6 +19,10 @@ typedef enum simmsgtype_e {
     SIMMSG_SYNC_ACK,
     SIMMSG_SYNC_REL,
     SIMMSG_STEP_TIME,
+    SIMMSG_ATS_REQ,
+    SIMMSG_ATS_RESP,
+    SIMMSG_ATS_INV,
+    SIMMSG_ATS_INV_CPL,
 } simmsgtype_t;
 
 #define PACKED __attribute__((packed))
@@ -68,6 +72,28 @@ typedef struct simmsg_s {
         struct {
             u_int32_t delta_ms;
         } PACKED step_time;
+        // ats_req addr encodes NW flag like in spec
+        struct {
+            u_int16_t bdf;
+            u_int64_t addr;
+            u_int32_t length;
+        } PACKED ats_req;
+        // ats_res returns array of uint64_t - same format as in spec
+        struct {
+            u_int16_t bdf;
+            u_int64_t addr;
+            u_int32_t length;
+            u_int8_t  error;
+        } PACKED ats_res;
+        // ats_inv has same address encoding as in spec
+        struct {
+            u_int16_t bdf;
+            u_int64_t addr;
+        } PACKED ats_inv;
+        struct {
+            u_int16_t bdf;
+            u_int64_t addr;
+        } PACKED ats_inv_cpl;
         struct {
             /* room to grow without breaking existing clients */
             u_int8_t pad[64];
@@ -114,6 +140,8 @@ int simc_readres(u_int16_t bdf,
                  u_int64_t addr, u_int32_t size, void *buf, u_int8_t error);
 int simc_writeres(u_int16_t bdf,
                   u_int64_t addr, u_int32_t size, u_int8_t error);
+int simc_atsres(u_int16_t bdf,
+                u_int64_t addr, u_int32_t length, void *buf, u_int8_t error);
 
 int simc_recv(simmsg_t *m);
 int simc_recv_and_handle(void);
