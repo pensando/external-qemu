@@ -73,6 +73,7 @@ typedef struct SimDevice {
     MemoryRegion bar[6];
     SimBar simbar[6];
     BarProps vf_bars[6];
+    struct IOMMUNotifier iotlb_notifier;
     QTAILQ_ENTRY(SimDevice) list;
 } SimDevice;
 
@@ -517,6 +518,15 @@ static void simdevice_msix_init(SimDevice *sd)
     return;
 }
 
+static void
+simdevice_iotlb_notify(struct IOMMUNotifier *notifier, IOMMUTLBEntry *data)
+{
+    SimDevice *sd = (SimDevice *)notifier->opaque;
+
+    dbgprintf("%s: bdf %04x iova %lx addr_mask %lx", __func__,
+              sd->simbdf, data->iova, data->addr_mask);
+}
+
 static uint16_t simdevice_find_sriov_cap(PCIDevice *pd, int simbdf) {
     uint16_t offset = PCI_CFG_SPACE_SIZE;
     uint64_t val;
@@ -540,6 +550,9 @@ static void simdevice_realize(PCIDevice *pd, Error **errp)
 
     simdevice_register_bars(sd);
     simdevice_msix_init(sd);
+    pci_iommu_init_iotlb_notifier(pd, &sd->iotlb_notifier,
+                                  simdevice_iotlb_notify, sd);
+    pci_iommu_register_iotlb_notifier(pd, PCI_NO_PASID, &sd->iotlb_notifier);
 
     if (sriov_cap_offset) {
         uint64_t total_vfs, vf_dev_id, vf_offset, vf_stride;
