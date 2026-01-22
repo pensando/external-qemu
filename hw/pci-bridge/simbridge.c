@@ -513,16 +513,16 @@ static void simdevice_msix_init(SimDevice *sd)
     return;
 }
 
-static uint16_t simdevice_find_sriov_cap(PCIDevice *pd, int simbdf) {
+static uint16_t simdevice_find_ext_cap(PCIDevice *pd, int simbdf, int ext_cap) {
     uint16_t offset = PCI_CFG_SPACE_SIZE;
     uint64_t val;
 
     while (offset && simc_cfgrd(simbdf, offset, 4, &val) == 0) {
-        /* NOTE: pcie_sriov_pf_init() relies on dev->config having the chain
-         * of capability headers leading to the SR-IOV capability, so we
+        /* NOTE: QEMU relies on dev->config having the chain
+         * of capability headers leading to the requested capability, so we
          * propagate them here. */
         pci_set_long(pd->config + offset, val);
-        if (PCI_EXT_CAP_ID(val) == PCI_EXT_CAP_ID_SRIOV)
+        if (PCI_EXT_CAP_ID(val) == ext_cap)
             return offset;
         offset = PCI_EXT_CAP_NEXT(val);
     }
@@ -532,7 +532,8 @@ static uint16_t simdevice_find_sriov_cap(PCIDevice *pd, int simbdf) {
 static void simdevice_realize(PCIDevice *pd, Error **errp)
 {
     SimDevice *sd = (SimDevice *)pd;
-    u_int16_t sriov_cap_offset = simdevice_find_sriov_cap(pd, sd->simbdf);
+    u_int16_t sriov_cap_offset = simdevice_find_ext_cap(pd, sd->simbdf, PCI_EXT_CAP_ID_SRIOV);
+    u_int16_t ats_cap_offset = simdevice_find_ext_cap(pd, sd->simbdf, PCI_EXT_CAP_ID_ATS);
 
     simdevice_register_bars(sd);
     simdevice_msix_init(sd);
@@ -567,6 +568,17 @@ static void simdevice_realize(PCIDevice *pd, Error **errp)
             if (props.size)
                 pcie_sriov_pf_init_vf_bar(pd, baridx, props.type, props.size);
         }
+    }
+
+    if (ats_cap_offset) {
+        uint64_t ats_cap;
+
+        if (simc_cfgrd(sd->simbdf, ats_cap_offset + PCI_ATS_CAP, 2, &ats_cap) != 0)
+            return;
+
+        dbgprintf("%s: ats_cap=%d page_aligned=%s\n", __func__, ats_cap_offset,
+                  (ats_cap & PCI_ATS_CAP_PAGE_ALIGNED) ? "true" : "false");
+        pcie_ats_init(pd, ats_cap_offset, ats_cap & PCI_ATS_CAP_PAGE_ALIGNED);
     }
 
     simdevices_add(sd);
