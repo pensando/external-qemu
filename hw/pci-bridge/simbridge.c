@@ -616,7 +616,8 @@ static void simdevice_vf_class_init(ObjectClass *klass, const void *data)
     hc->unplug_request = pcie_cap_slot_unplug_request_cb;
 }
 
-static SimDevice *simbridge_register_dev(SimBridgeDn *sbdn, int simbdf)
+static SimDevice *simbridge_register_dev(SimBridgeDn *sbdn, int simbdf,
+                                         bool multifunction)
 {
     Object *obj;
     DeviceState *dev;
@@ -636,6 +637,8 @@ static SimDevice *simbridge_register_dev(SimBridgeDn *sbdn, int simbdf)
 
     snprintf(name, sizeof(name), "simdevice-%04x", simbdf);
     qdev_set_id(dev, strdup(name), &err);
+    qdev_prop_set_int32(dev, "addr", PCI_BDF_TO_DEVFN(simbdf));
+    qdev_prop_set_bit(dev, "multifunction", multifunction);
 
     bus = BUS(&(PCI_BRIDGE(sbdn)->sec_bus));
     qdev_set_parent_bus(dev, bus, &err);
@@ -684,12 +687,12 @@ static SimBridgeDn *simbridge_register_bridge(SimBridge *sb, int simbdf)
 
 static int simbridge_scan_devices(SimBridge *sb, SimBridgeDn *sbdn, int bus)
 {
-    int dev, bdf;
+    int devfn, bdf;
     u_int64_t vendevid, val;
 
     dbgprintf("scan_devices: scanning bus %d start\n", bus);
-    for (dev = 0; dev < 32; dev++) {
-        bdf = bdf_make(bus, dev, 0);
+    for (devfn = 0; devfn < PCI_DEVFN_MAX; devfn++) {
+        bdf = bdf_make(bus, PCI_SLOT(devfn), PCI_FUNC(devfn));
 
         /* read vendor/device id to check if a device exists at bdf */
         if (simc_cfgrd(bdf, 0, 4, &vendevid) != 0) {
@@ -725,7 +728,7 @@ static int simbridge_scan_devices(SimBridge *sb, SimBridgeDn *sbdn, int bus)
             dbgprintf("scan_devices: bdf %04x endpoint vendevid %08lx\n",
                       bdf, vendevid);
             assert(sbdn != NULL);
-            simbridge_register_dev(sbdn, bdf);
+            simbridge_register_dev(sbdn, bdf, !!(val & 0x80));
         }
     }
     dbgprintf("scan_devices: scanning bus %d done\n", bus);
