@@ -568,6 +568,8 @@ static void simdevice_realize(PCIDevice *pd, Error **errp)
                 pcie_sriov_pf_init_vf_bar(pd, baridx, props.type, props.size);
         }
     }
+
+    simdevices_add(sd);
 }
 
 static void simdevice_class_init(ObjectClass *klass, const void *data)
@@ -600,6 +602,8 @@ static void simdevice_vf_realize(PCIDevice *pd, Error **errp)
             pci_register_bar(pd, baridx, pf->vf_bars[baridx].type, &vf->bar[baridx]);
         }
     }
+
+    simdevices_add(vf);
 }
 
 static void simdevice_vf_class_init(ObjectClass *klass, const void *data)
@@ -646,9 +650,6 @@ static SimDevice *simbridge_register_dev(SimBridgeDn *sbdn, int simbdf,
     /* VSW-286: this is definitely not the proper way of doing this */
     pcibus->flags |= PCI_BUS_EXTENDED_CONFIG_SPACE;
     object_property_set_bool(obj, "realized", true, NULL);
-
-    simdevices_add(sd);
-
     return sd;
 }
 
