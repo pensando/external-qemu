@@ -154,7 +154,7 @@ sim_wait_for_resp(int s, simmsgtype_t msgtype, simmsg_t *m,
 static int
 sim_do_read(int s, simmsgtype_t msgtype,
             u_int16_t bdf, u_int8_t bar,
-            u_int64_t addr, u_int32_t size, u_int64_t *val,
+            u_int64_t addr, u_int32_t size, u_int8_t flags, u_int64_t *val,
             msg_handler_t msg_handler)
 {
     int r;
@@ -164,6 +164,7 @@ sim_do_read(int s, simmsgtype_t msgtype,
         .u.read.bar = bar,
         .u.read.addr = addr,
         .u.read.size = size,
+        .u.read.flags = flags,
     };
 
     r = sim_writen(s, &m, sizeof(m));
@@ -181,7 +182,7 @@ sim_do_read(int s, simmsgtype_t msgtype,
 static int
 sim_do_write(int s, simmsgtype_t msgtype,
              u_int16_t bdf, u_int8_t bar,
-             u_int64_t addr, u_int32_t size, u_int64_t val,
+             u_int64_t addr, u_int32_t size, u_int8_t flags, u_int64_t val,
              msg_handler_t msg_handler, int sync)
 {
     int r;
@@ -191,6 +192,7 @@ sim_do_write(int s, simmsgtype_t msgtype,
         .u.write.bar = bar,
         .u.write.addr = addr,
         .u.write.size = size,
+        .u.write.flags = flags,
         .u.write.val = val,
     };
 
@@ -355,7 +357,7 @@ sim_socket(const char *addrstr, struct simsockaddr *a)
 static int
 simc_do_write(simmsgtype_t msgtype,
               u_int16_t bdf, u_int8_t bar,
-              u_int64_t addr, u_int8_t size, u_int64_t val)
+              u_int64_t addr, u_int8_t size, u_int8_t flags, u_int64_t val)
 {
     simclient_t *sc = &simclient;
     int s = sc->s;
@@ -364,7 +366,7 @@ simc_do_write(simmsgtype_t msgtype,
     if (!simclient.open) return -EBADF;
 
     do {
-        r = sim_do_write(s, msgtype, bdf, bar, addr, size, val,
+        r = sim_do_write(s, msgtype, bdf, bar, addr, size, flags, val,
                          sc->handler, sc->sync_writes);
     } while (r == -EAGAIN);
     return r;
@@ -373,7 +375,7 @@ simc_do_write(simmsgtype_t msgtype,
 static int
 simc_do_read(simmsgtype_t msgtype,
              u_int16_t bdf, u_int8_t bar,
-             u_int64_t addr, u_int8_t size, u_int64_t *val)
+             u_int64_t addr, u_int8_t size, u_int8_t flags, u_int64_t *val)
 {
     simclient_t *sc = &simclient;
     int s = sc->s;
@@ -382,7 +384,7 @@ simc_do_read(simmsgtype_t msgtype,
     if (!sc->open) return -EBADF;
 
     do  {
-        r = sim_do_read(s, msgtype, bdf, bar, addr, size, val, sc->handler);
+        r = sim_do_read(s, msgtype, bdf, bar, addr, size, flags, val, sc->handler);
     } while (r == -EAGAIN);
     return r;
 }
@@ -434,41 +436,41 @@ simc_close(void)
 int
 simc_cfgrd(u_int16_t bdf, u_int16_t addr, u_int8_t size, u_int64_t *val)
 {
-    return simc_do_read(SIMMSG_CFGRD, bdf, 0, addr, size, val);
+    return simc_do_read(SIMMSG_CFGRD, bdf, 0, addr, size, 0, val);
 }
 
 int
 simc_cfgwr(u_int16_t bdf, u_int16_t addr, u_int8_t size, u_int64_t val)
 {
-    return simc_do_write(SIMMSG_CFGWR, bdf, 0, addr, size, val);
+    return simc_do_write(SIMMSG_CFGWR, bdf, 0, addr, size, 0, val);
 }
 
 int
 simc_memrd(u_int16_t bdf, u_int8_t bar,
-           u_int64_t addr, u_int8_t size, u_int64_t *val)
+           u_int64_t addr, u_int8_t size, u_int8_t flags, u_int64_t *val)
 {
-    return simc_do_read(SIMMSG_MEMRD, bdf, bar, addr, size, val);
+    return simc_do_read(SIMMSG_MEMRD, bdf, bar, addr, size, flags, val);
 }
 
 int
 simc_memwr(u_int16_t bdf, u_int8_t bar,
-           u_int64_t addr, u_int8_t size, u_int64_t val)
+           u_int64_t addr, u_int8_t size, u_int8_t flags, u_int64_t val)
 {
-    return simc_do_write(SIMMSG_MEMWR, bdf, bar, addr, size, val);
+    return simc_do_write(SIMMSG_MEMWR, bdf, bar, addr, size, flags, val);
 }
 
 int
 simc_iord(u_int16_t bdf, u_int8_t bar,
           u_int16_t addr, u_int8_t size, u_int64_t *val)
 {
-    return simc_do_read(SIMMSG_IORD, bdf, bar, addr, size, val);
+    return simc_do_read(SIMMSG_IORD, bdf, bar, addr, size, 0, val);
 }
 
 int
 simc_iowr(u_int16_t bdf, u_int8_t bar,
           u_int16_t addr, u_int8_t size, u_int64_t val)
 {
-    return simc_do_write(SIMMSG_IOWR, bdf, bar, addr, size, val);
+    return simc_do_write(SIMMSG_IOWR, bdf, bar, addr, size, 0, val);
 }
 
 int

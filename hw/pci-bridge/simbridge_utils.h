@@ -27,6 +27,8 @@ typedef enum simmsgtype_e {
 
 #define PACKED __attribute__((packed))
 
+#define SIMMSG_FLAGS_TRANSLATED (1 << 0)
+
 typedef struct simmsg_s {
     u_int16_t magic;
     u_int16_t msgtype;
@@ -40,18 +42,21 @@ typedef struct simmsg_s {
             u_int8_t  bar;
             u_int64_t addr;
             u_int32_t size;
+            u_int8_t  flags;
         } PACKED generic;
         struct {
             u_int16_t bdf;
             u_int8_t  bar;
             u_int64_t addr;
             u_int32_t size;
+            u_int8_t  flags;
         } PACKED read;
         struct {
             u_int16_t bdf;
             u_int8_t  bar;
             u_int64_t addr;
             u_int32_t size;
+            u_int8_t  flags;
             u_int64_t val;
             u_int8_t  error;
         } PACKED readres;
@@ -60,6 +65,7 @@ typedef struct simmsg_s {
             u_int8_t  bar;
             u_int64_t addr;
             u_int32_t size;
+            u_int8_t  flags;
             u_int64_t val;
         } PACKED write;
         struct {
@@ -67,6 +73,7 @@ typedef struct simmsg_s {
             u_int8_t  bar;
             u_int64_t addr;
             u_int32_t size;
+            u_int8_t  flags;
             u_int8_t  error;
         } PACKED writeres;
         struct {
@@ -127,9 +134,9 @@ int simc_cfgrd(u_int16_t bdf, u_int16_t addr, u_int8_t size, u_int64_t *val);
 int simc_cfgwr(u_int16_t bdf, u_int16_t addr, u_int8_t size, u_int64_t val);
 
 int simc_memrd(u_int16_t bdf, u_int8_t bar,
-               u_int64_t addr, u_int8_t size, u_int64_t *val);
+               u_int64_t addr, u_int8_t size, u_int8_t flags, u_int64_t *val);
 int simc_memwr(u_int16_t bdf, u_int8_t bar,
-               u_int64_t addr, u_int8_t size, u_int64_t val);
+               u_int64_t addr, u_int8_t size, u_int8_t flags, u_int64_t val);
 
 int simc_iord(u_int16_t bdf, u_int8_t bar,
               u_int16_t addr, u_int8_t size, u_int64_t *val);

@@ -320,7 +320,7 @@ simdevice_memrd(void *opaque, hwaddr addr, unsigned size)
 
     /* add bar as model expects physical address */
     addr += simbar->sd->bar[baridx].addr;
-    if (simc_memrd(bdf, baridx, addr, size, &val) < 0) {
+    if (simc_memrd(bdf, baridx, addr, size, 0, &val) < 0) {
         dbgprintf("simdevice_memrd(0x%"PRIx64", 0x%x) failed%s\n",
                   addr, size, LOG_4B_UNALIGNED(addr));
         val = 0xffffffffffffffffULL;
@@ -340,7 +340,7 @@ simdevice_memwr(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 
     /* add bar as model expects physical address */
     addr += simbar->sd->bar[baridx].addr;
-    if (simc_memwr(bdf, baridx, addr, size, val) < 0) {
+    if (simc_memwr(bdf, baridx, addr, size, 0, val) < 0) {
         dbgprintf("simdevice_memwr(0x%"PRIx64", 0x%x, 0x%"PRIx64") failed%s\n",
                   addr, size, val, LOG_4B_UNALIGNED(addr));
     } else {
@@ -860,10 +860,11 @@ process_memrd(int fd, simmsg_t *m)
     const u_int16_t bdf = m->u.read.bdf;
     const u_int64_t addr = m->u.read.addr;
     const u_int32_t size = m->u.read.size;
+    const u_int8_t flags = m->u.read.flags;
     char buf[4096];
 
-    dbgprintf("memrd: bdf %04x addr 0x%"PRIx64" size 0x%x\n",
-              bdf, addr, size);
+    dbgprintf("memrd: bdf %04x addr 0x%"PRIx64" size 0x%x flags 0x%x\n",
+              bdf, addr, size, flags);
 
     if (size > sizeof(buf)) {
         dbgprintf("process_memrd: read size too large: 0x%x\n", size);
@@ -885,7 +886,9 @@ process_memrd(int fd, simmsg_t *m)
             return -1;
         }
         pd = PCI_DEVICE(sd);
-        if (pci_dma_read(pd, addr, buf, size) != MEMTX_OK) {
+        if (pcie_ats_enabled(pd) && (flags & SIMMSG_FLAGS_TRANSLATED)) {
+            cpu_physical_memory_rw(addr, (uint8_t *)buf, size, 0);
+        } else if (pci_dma_read(pd, addr, buf, size) != MEMTX_OK) {
             dbgprintf("process_memrd: pci_dma_read 0x%"PRIx64" 0x%x failed\n",
                       addr, size);
             simc_readres(bdf, addr, size, NULL, EFAULT);
@@ -906,10 +909,11 @@ process_memwr(int fd, simmsg_t *m)
     const u_int16_t bdf  = m->u.write.bdf;
     const u_int64_t addr = m->u.write.addr;
     const u_int32_t size = m->u.write.size;
+    const u_int8_t flags = m->u.write.flags;
     char buf[4096];
 
-    dbgprintf("memwr: bdf %04x addr 0x%"PRIx64" size 0x%x\n",
-              bdf, addr, size);
+    dbgprintf("memwr: bdf %04x addr 0x%"PRIx64" size 0x%x flags 0x%x\n",
+              bdf, addr, size, flags);
 
     if (size > sizeof(buf)) {
         dbgprintf("process_memwr: write size too large: 0x%x\n", size);
@@ -933,7 +937,11 @@ process_memwr(int fd, simmsg_t *m)
             return;
         }
         pd = PCI_DEVICE(sd);
-        pci_dma_write(pd, addr, buf, size);
+        if (pcie_ats_enabled(pd) && (flags & SIMMSG_FLAGS_TRANSLATED)) {
+            cpu_physical_memory_rw(addr, (uint8_t *)buf, size, 1);
+        } else {
+            pci_dma_write(pd, addr, buf, size);
+        }
     } else {
         /* no specific device bdf, use generic access */
         cpu_physical_memory_rw(addr, (uint8_t *)buf, size, 1);
