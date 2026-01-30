@@ -658,9 +658,6 @@ static SimDevice *simbridge_register_dev(SimBridgeDn *sbdn, int simbdf,
 
     bus = BUS(&(PCI_BRIDGE(sbdn)->sec_bus));
     qdev_set_parent_bus(dev, bus, &err);
-    PCIBus *pcibus = PCI_BUS(bus);
-    /* VSW-286: this is definitely not the proper way of doing this */
-    pcibus->flags |= PCI_BUS_EXTENDED_CONFIG_SPACE;
     object_property_set_bool(obj, "realized", true, NULL);
     return sd;
 }
@@ -691,9 +688,6 @@ static SimBridgeDn *simbridge_register_bridge(SimBridge *sb, int simbdf)
 
     bus = BUS(&(PCI_BRIDGE(sb)->sec_bus));
     qdev_set_parent_bus(dev, bus, &err);
-    PCIBus *pcibus = PCI_BUS(bus);
-    /* VSW-286: this is definitely not the proper way of doing this */
-    pcibus->flags |= PCI_BUS_EXTENDED_CONFIG_SPACE;
     object_property_set_bool(obj, "realized", true, NULL);
     return sbdn;
 }
@@ -1174,6 +1168,7 @@ static void simbridge_init(SimBridge *sb)
 static void simbridge_realizefn(PCIDevice *d, Error **errp)
 {
     PCIEPort *p = PCIE_PORT(d);
+    PCIBridge *pb = PCI_BRIDGE(d);
     int rc;
 
     pci_bridge_initfn(d, TYPE_PCIE_BUS);
@@ -1208,6 +1203,10 @@ static void simbridge_realizefn(PCIDevice *d, Error **errp)
         goto err;
     }
 
+    // VSW-286: since we are going to realize child buses now directly
+    // (instead of relying on command line driven mechanism) - we need to
+    // preset our bus flags for the propagation logic in pci.c to pick up
+    pb->sec_bus.flags |= PCI_BUS_EXTENDED_CONFIG_SPACE;
     simbridge_init(SIM_BRIDGE(d));
     return;
 
