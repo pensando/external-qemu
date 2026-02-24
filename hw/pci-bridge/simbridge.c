@@ -296,11 +296,6 @@ static void simdevice_cfgwr(PCIDevice *pd,
         else
             data &= ~PCI_COMMAND_MEMORY;
     }
-    /*
-     * Send this write down to pci layer to update
-     * bar addresses when they come.
-     */
-    pci_default_write_config(pd, addr, data, len);
 
     if (simc_cfgwr(sd->simbdf, addr, len, val) < 0) {
         dbgprintf("simdevice_cfgwr(0x%04x, 0x%x, %d) = 0x%"PRIx64" failed\n",
@@ -309,6 +304,13 @@ static void simdevice_cfgwr(PCIDevice *pd,
         dbgprintf("simdevice_cfgwr(0x%04x, 0x%x, %d) = 0x%"PRIx64"\n",
                   sd->simbdf, addr, len, val);
     }
+
+    /*
+     * Send this write down to pci layer to update
+     * bar addresses when they come. Has to be after simc_cfgwr to make sure
+     * that model has been notified and allow correct callback processing (like reset).
+     */
+    pci_default_write_config(pd, addr, data, len);
 }
 
 static uint64_t
@@ -547,11 +549,26 @@ static uint16_t simdevice_find_ext_cap(PCIDevice *pd, int simbdf, int ext_cap) {
     return 0;
 }
 
+static void simdevice_ats_init(PCIDevice *pd)
+{
+    SimDevice *sd = (SimDevice *)pd;
+    u_int16_t ats_cap_offset = simdevice_find_ext_cap(pd, sd->simbdf, PCI_EXT_CAP_ID_ATS);
+    u_int64_t ats_cap;
+
+    if (!pd->exp.ats_cap && ats_cap_offset) {
+        if (simc_cfgrd(sd->simbdf, ats_cap_offset + PCI_ATS_CAP, 2, &ats_cap) != 0)
+            return;
+
+        dbgprintf("%s: ats_cap=%d page_aligned=%s\n", __func__, ats_cap_offset,
+                  (ats_cap & PCI_ATS_CAP_PAGE_ALIGNED) ? "true" : "false");
+        pcie_ats_init(pd, ats_cap_offset, ats_cap & PCI_ATS_CAP_PAGE_ALIGNED);
+    }
+}
+
 static void simdevice_realize(PCIDevice *pd, Error **errp)
 {
     SimDevice *sd = (SimDevice *)pd;
     u_int16_t sriov_cap_offset = simdevice_find_ext_cap(pd, sd->simbdf, PCI_EXT_CAP_ID_SRIOV);
-    u_int16_t ats_cap_offset = simdevice_find_ext_cap(pd, sd->simbdf, PCI_EXT_CAP_ID_ATS);
 
     simdevice_register_bars(sd);
     simdevice_msix_init(sd);
@@ -591,17 +608,7 @@ static void simdevice_realize(PCIDevice *pd, Error **errp)
         }
     }
 
-    if (ats_cap_offset) {
-        uint64_t ats_cap;
-
-        if (simc_cfgrd(sd->simbdf, ats_cap_offset + PCI_ATS_CAP, 2, &ats_cap) != 0)
-            return;
-
-        dbgprintf("%s: ats_cap=%d page_aligned=%s\n", __func__, ats_cap_offset,
-                  (ats_cap & PCI_ATS_CAP_PAGE_ALIGNED) ? "true" : "false");
-        pcie_ats_init(pd, ats_cap_offset, ats_cap & PCI_ATS_CAP_PAGE_ALIGNED);
-    }
-
+    simdevice_ats_init(pd);
     simdevices_add(sd);
 }
 
@@ -639,14 +646,23 @@ static void simdevice_vf_realize(PCIDevice *pd, Error **errp)
     simdevices_add(vf);
 }
 
+static void simdevice_vf_reset(DeviceState *qdev)
+{
+    PCIDevice *pd = PCI_DEVICE(qdev);
+    /* we can only discover ATS capability when VF gets enabled - so do it on reset */
+    simdevice_ats_init(pd);
+}
+
 static void simdevice_vf_class_init(ObjectClass *klass, const void *data)
 {
     PCIDeviceClass *pdc = PCI_DEVICE_CLASS(klass);
+    DeviceClass *dc = DEVICE_CLASS(klass);
     HotplugHandlerClass *hc = HOTPLUG_HANDLER_CLASS(klass);
 
     pdc->config_read = simdevice_cfgrd;
     pdc->config_write = simdevice_cfgwr;
     pdc->realize = simdevice_vf_realize;
+    device_class_set_legacy_reset(dc, simdevice_vf_reset);
     hc->pre_plug = pcie_cap_slot_pre_plug_cb;
     hc->plug = pcie_cap_slot_plug_cb;
     hc->unplug = pcie_cap_slot_unplug_cb;
