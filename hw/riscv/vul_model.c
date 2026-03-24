@@ -864,7 +864,9 @@ static void vul_model_machine_done(Notifier *notifier, void *data)
     uint64_t kernel_entry = 0;
     RISCVBootInfo boot_info;
 
-    if (s->use_ssram) {
+    if (s->boot_addr_set) {
+        start_addr = s->boot_addr;
+    } else if (s->use_ssram) {
         start_addr = memmap[VUL_MODEL_SRAM].base;
     } else {
         start_addr = memmap[VUL_MODEL_DRAM_CC2].base + s->nicram_size;
@@ -1207,6 +1209,19 @@ static void vul_model_set_mctp_emu_conf(Object *obj, const char *val, Error **er
     s->mctp_emu_sock = g_strdup(val);
 }
 
+static void vul_model_set_boot_addr(Object *obj, const char *val, Error **errp)
+{
+    RISCVVulModelState *s = RISCV_VUL_MODEL_MACHINE(obj);
+
+    if (!val || !strcmp(val, "none")) {
+        s->boot_addr_set = false;
+        return;
+    }
+
+    s->boot_addr = strtoull(val, NULL, 0);
+    s->boot_addr_set = true;
+}
+
 static void vul_model_set_fpga_emu_conf(Object *obj, const char *val, Error **errp)
 {
     RISCVVulModelState *s = RISCV_VUL_MODEL_MACHINE(obj);
@@ -1275,6 +1290,12 @@ static void vul_model_machine_class_init(ObjectClass *oc, const void *data)
 #ifdef CONFIG_TPM
     machine_class_allow_dynamic_sysbus_dev(mc, TYPE_TPM_TIS_SYSBUS);
 #endif
+
+    object_class_property_add_str(oc, "boot-addr", NULL,
+                                  vul_model_set_boot_addr);
+    object_class_property_set_description(oc, "boot-addr",
+                                          "Override the boot address. "
+                                          "Set to a hex address like 0x70000000, or 'none' to use the default.");
 
     object_class_property_add_bool(oc, "ssram", vul_model_get_ssram,
                                    vul_model_set_ssram);

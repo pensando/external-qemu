@@ -61,6 +61,8 @@ struct RISCVVulModelState {
     bool have_aclint;
     bool use_ssram;
     size_t nicram_size;
+    uint64_t boot_addr;
+    bool boot_addr_set;
     char *mctp_emu_sock;
     char *fpga_emu_sock;
     bool fpga_emu_is_server;
