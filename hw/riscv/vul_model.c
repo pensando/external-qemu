@@ -57,6 +57,46 @@
 #include "hw/ssi/ssi.h"
 #include "vul_zmq.h"
 
+/* SiFive Mallard vendor CSR (0x7C0-0x7C6) stubs */
+#define CSR_SIFIVE_VENDOR0  0x7C0
+#define CSR_SIFIVE_VENDOR_COUNT 7
+
+static uint64_t sifive_vendor_csr_storage[CSR_SIFIVE_VENDOR_COUNT];
+
+static RISCVException sifive_vendor_predicate(CPURISCVState *env, int csrno)
+{
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException sifive_vendor_read(CPURISCVState *env, int csrno,
+                                         target_ulong *val)
+{
+    *val = sifive_vendor_csr_storage[csrno - CSR_SIFIVE_VENDOR0];
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException sifive_vendor_write(CPURISCVState *env, int csrno,
+                                          target_ulong val, uintptr_t ra)
+{
+    sifive_vendor_csr_storage[csrno - CSR_SIFIVE_VENDOR0] = val;
+    return RISCV_EXCP_NONE;
+}
+
+static void vul_model_register_vendor_csrs(void)
+{
+    int i;
+
+    for (i = 0; i < CSR_SIFIVE_VENDOR_COUNT; i++) {
+        riscv_csr_operations ops = {
+            .name = "sifive_vendor",
+            .predicate = sifive_vendor_predicate,
+            .read = sifive_vendor_read,
+            .write = sifive_vendor_write,
+        };
+        riscv_set_csr_ops(CSR_SIFIVE_VENDOR0 + i, &ops);
+    }
+}
+
 /*
  * The vul_model_ machine physical address space used by some of the devices
  * namely ACLINT, PLIC, APLIC, and IMSIC depend on number of Sockets,
@@ -1070,6 +1110,8 @@ static void vul_model_machine_init(MachineState *machine)
                            memmap[VUL_MODEL_MROM].size, &error_fatal);
     memory_region_add_subregion(system_memory, memmap[VUL_MODEL_MROM].base,
                                 mask_rom);
+
+    vul_model_register_vendor_csrs();
 
     vul_zmq_init();
 
