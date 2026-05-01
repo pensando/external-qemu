@@ -345,7 +345,11 @@ static void rst_mem(uint64_t addr, uint32_t size)
     }
 }
 
-#define RST_CHUNK_SIZE 0x40000
+/* MEM_RESET is a metadata-only ZMQ message (no payload), so the chunk
+ * size only bounds how much work the server does between replies, not
+ * the wire size. Use a large chunk so a typical multi-MB qstate / table
+ * zero turns into a single round-trip. */
+#define RST_CHUNK_SIZE 0x4000000  /* 64 MiB */
 void vul_zmq_rst_mem(uint64_t addr, uint32_t size)
 {
     do {

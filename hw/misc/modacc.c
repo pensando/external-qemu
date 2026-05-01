@@ -124,9 +124,14 @@ static void copy_data_from_mem(ModAccState *s)
 
 static void perform_op(ModAccState *s)
 {
-    assert(s->regs.size <= s->region_size - sizeof(s->regs));
-
     enum ctrl_opcode opcode = (s->regs.ctrl & CTRL_OPCODE_MASK) >> CTRL_OPCODE_LSB;
+
+    /* MEM_RST and DB do not transfer through the data buffer, so they
+     * are not bounded by region_size. Other opcodes use the buffer and
+     * must fit. */
+    if (opcode != CTRL_OPCODE_MEM_RST && opcode != CTRL_OPCODE_DB) {
+        assert(s->regs.size <= s->region_size - sizeof(s->regs));
+    }
 
     uint64_t addr = (uint64_t)s->regs.hi_addr << 32 | (uint64_t)s->regs.lo_addr;
 
