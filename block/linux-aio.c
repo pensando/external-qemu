@@ -22,6 +22,7 @@
 #include "qemu/coroutine_int.h"
 
 #include <libaio.h>
+#include <linux/fs.h>
 
 /*
  * Queue size (per-device).
