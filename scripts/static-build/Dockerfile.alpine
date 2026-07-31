@@ -1,0 +1,42 @@
+FROM alpine:3.18
+
+RUN apk update && apk add --no-cache \
+        attr-dev \
+        bash \
+        bison \
+        ca-certificates \
+        curl \
+        flex \
+        gcc \
+        g++ \
+        git \
+        glib-dev \
+        glib-static \
+        libaio-dev \
+        linux-headers \
+        make \
+        meson \
+        musl-dev \
+        ncurses-dev \
+        ncurses-static \
+        ninja \
+        perl \
+        pkgconf \
+        py3-pip \
+        python3 \
+        samurai \
+        zlib-dev \
+        zlib-static
+
+# Alpine only ships libzmq as a shared library. hw/riscv's VUL_MODEL board
+# (default-enabled for riscv64-softmmu on this branch) hard-depends on
+# libzmq, so build a static libzmq ourselves. --disable-curve avoids also
+# needing a static libsodium (CurveZMQ auth isn't used by VUL_MODEL).
+RUN cd /tmp && \
+    curl -sL https://github.com/zeromq/libzmq/releases/download/v4.3.5/zeromq-4.3.5.tar.gz -o zmq.tar.gz && \
+    tar xzf zmq.tar.gz && \
+    cd zeromq-4.3.5 && \
+    ./configure --prefix=/usr --enable-static --disable-shared --disable-curve --without-docs && \
+    make -j"$(nproc)" && \
+    make install && \
+    cd / && rm -rf /tmp/zeromq-4.3.5 /tmp/zmq.tar.gz
