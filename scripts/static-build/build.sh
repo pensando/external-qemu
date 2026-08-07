@@ -53,7 +53,6 @@ cd "$REPO_ROOT"
             --disable-docs \
             --extra-cflags=-Wno-error=discarded-qualifiers
         ninja -j\$(nproc)
-        strip $BINARIES
     "
 
 # Assemble a small, self-contained dist/ directory: the stripped binaries plus
