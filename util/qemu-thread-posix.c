@@ -412,6 +412,8 @@ void qemu_thread_create(QemuThread *thread, const char *name,
         error_exit(err, __func__);
     }
 
+    pthread_attr_setstacksize(&attr, 8 * 1024 * 1024);
+
     if (mode == QEMU_THREAD_DETACHED) {
         pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
     }
