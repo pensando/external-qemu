@@ -51,7 +51,8 @@ cd "$REPO_ROOT"
             --enable-linux-aio \
             --enable-attr \
             --disable-docs \
-            --extra-cflags=-Wno-error=discarded-qualifiers
+            --extra-cflags=-Wno-error=discarded-qualifiers \
+            --extra-ldflags=-Wl,-z,stack-size=8388608
         ninja -j\$(nproc)
     "
 
