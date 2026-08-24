@@ -941,6 +941,9 @@ static SiFiveSPIState *sifive_spi0_create(hwaddr addr, char *sock, bool is_serve
 
     // Create tcp-ssi device and connect to spi0 bus
     DeviceState *fpga_dev = vul_fpga_create(sock, is_server, is_soc);
+    if (!fpga_dev) {
+        exit(1);
+    }
     qdev_prop_set_uint8(fpga_dev, "cs", 0);
     qdev_realize_and_unref(fpga_dev, BUS(spi0->spi), &error_fatal);
 
@@ -1218,6 +1221,7 @@ static void vul_model_set_machine_type_conf(Object *obj, const char *val, Error 
     if (!val) {
         // no fpga-emu-mode is specified, use default as server
         s->is_soc = true;
+        return;
     }
 
     if (g_ascii_strcasecmp(val, "suc") == 0) {
@@ -1237,6 +1241,7 @@ static void vul_model_set_fpga_emu_mode_conf(Object *obj, const char *val, Error
     if (!val) {
         // no fpga-emu-mode is specified, use default as server
         s->fpga_emu_is_server = true;
+        return;
     }
 
     if (g_ascii_strcasecmp(val, "client") == 0) {

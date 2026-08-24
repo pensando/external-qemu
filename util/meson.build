@@ -124,6 +124,11 @@ endif
 util_ss.add(when: 'CONFIG_VUL_MODEL', if_true: files('vul_zmq.c'))
 # Meson forces us to pass the dependency this way: if CONFIG_VUL_MODEL is not defined, it'll still try to check for
 # libzmq availabilty and this is not ok
-if config_target.get('CONFIG_VUL_MODEL', 'n') == 'y'
+# NOTE: config_target here is a leftover from the foreach loop over target_dirs
+# earlier in meson.build, not the config of any particular target -- use
+# config_all (the same merged, all-targets config that util_ss.apply() below
+# uses to resolve the 'CONFIG_VUL_MODEL' file condition above) so this stays
+# consistent with whether vul_zmq.c actually got added to util_ss.
+if config_all.get('CONFIG_VUL_MODEL', 'n') == 'y'
   util_ss.add(dependency('libzmq'))
 endif

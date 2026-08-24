@@ -20,6 +20,8 @@ typedef enum VulFPGARegAddr {
     VUL_FPGA_REG_ADDR_LENGTH           = 0x02,
     VUL_FPGA_REG_ADDR_CTRL             = 0x03,
     VUL_FPGA_REG_ADDR_STATUS           = 0x04,
+    VUL_FPGA_REG_ADDR_UART_LEN         = 0x06,
+    VUL_FPGA_REG_ADDR_SCRATCH          = 0x07,
     VUL_FPGA_REG_ADDR_LENGTH_SHADOW    = 0x82,
     VUL_FPGA_REG_ADDR_CTRL_SHADOW      = 0x83,
     VUL_FPGA_REG_ADDR_STATUS_SHADOW    = 0x84,
@@ -39,11 +41,14 @@ typedef enum VulFPGABUFType {
     VUL_FPGABUF_NUM,
 } VulFPGABUFType;
 
+typedef struct VulFPGABUFChannel {
+    VulFPGABUFRegs regs;
+    Fifo8 fifo;
+} VulFPGABUFChannel;
+
 typedef struct VulFPGABUF {
-    struct {
-        VulFPGABUFRegs regs;
-        Fifo8 fifo;
-    } tx, rx;
+    VulFPGABUFChannel tx, rx;
+    uint8_t scratch;
     void *state; /* parent state */
 } VulFPGABUF;
 

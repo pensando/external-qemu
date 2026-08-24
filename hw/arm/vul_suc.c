@@ -1102,6 +1102,9 @@ static DeviceState *sifive_spi0_create_suc(hwaddr addr, qemu_irq irq, char *sock
     if (sock) {
         SiFiveSPIState *spi = SIFIVE_SPI(dev);
         DeviceState *fpga_dev = vul_fpga_create(sock, is_server, is_soc);
+        if (!fpga_dev) {
+            exit(1);
+        }
 
         // Set CS property before realising
         qdev_prop_set_uint8(fpga_dev, "cs", 0);

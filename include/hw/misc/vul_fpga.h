@@ -2,9 +2,8 @@
 
 #include "io/channel-socket.h"
 #include "io/net-listener.h"
-#include "hw/sysbus.h"
+#include "hw/ssi/ssi.h"
 #include "qom/object.h"
-#include "qemu/log.h"
 #include "qapi/error.h"
 #include <stdint.h>
 
@@ -121,7 +120,14 @@ typedef struct VulFPGACommand {
     uint8_t data;
     uint16_t address;
     uint32_t dummy_data_count;
+    /* FRU 16-bit address assembly (two 8-bit SPI bytes) */
+    uint8_t addr0;
+    uint8_t addr1;
+    uint8_t addr_cnt;
 } VulFPGACommand;
+
+/* Only the MCTP and CMD buffers are backed by real FIFOs today */
+#define VUL_FPGA_NUM_BUFFERS (VUL_FPGABUF_CMD + 1)
 
 typedef enum VulFPGACommandState {
     VUL_FPGA_CMD_STATE_OPCODE,
@@ -130,11 +136,10 @@ typedef enum VulFPGACommandState {
 } VulFPGACommandState;
 
 typedef struct VulFPGAState {
-    SysBusDevice parent_obj;
-    hwaddr base_addr;
+    SSIPeripheral parent_obj;
 
     /* FPGA Buffers */
-    VulFPGABUF *buffers;
+    VulFPGABUF buffers[VUL_FPGA_NUM_BUFFERS];
     uint8_t num_buf;
 
     /* FPGA command */
@@ -158,6 +163,8 @@ typedef struct VulFPGAState {
 
     /* client */
     QIOChannelSocket *csocket;
+    bool connect_pending;
+    guint reconnect_timer;
 } VulFPGAState;
 
 inline static VulFPGABUF *vul_fpga_get_buffer(VulFPGAState *s, uint8_t opcode)

@@ -330,3 +330,19 @@ djmemc_write(int reg, uint64_t value, unsigned int size) "reg=0x%x value=0x%"PRI
 # iosb.c
 iosb_read(int reg, uint64_t value, unsigned int size) "reg=0x%x value=0x%"PRIx64" size=%u"
 iosb_write(int reg, uint64_t value, unsigned int size) "reg=0x%x value=0x%"PRIx64" size=%u"
+
+# vul_fpga.c
+vul_fpga_reg_write(uint32_t addr, uint32_t val) "addr=0x%x val=0x%x"
+vul_fpga_reg_read(uint32_t addr, uint32_t val) "addr=0x%x val=0x%x"
+vul_fpga_reg_oob(uint32_t addr) "out-of-range CPLD register access: 0x%x"
+vul_fpga_fru_write(uint32_t addr, uint32_t val) "addr=0x%x val=0x%x"
+vul_fpga_fru_read(uint32_t addr, uint32_t val) "addr=0x%x val=0x%x"
+vul_fpga_fru_oob(uint32_t addr) "out-of-range FRU access: 0x%x"
+vul_fpga_socket_connect(const char *addr) "connecting to %s"
+vul_fpga_socket_listening(const char *addr) "listening on %s"
+vul_fpga_socket_client_connected(void) "client connected"
+vul_fpga_socket_client_closed(void) "client disconnected"
+vul_fpga_transfer(uint32_t state, uint32_t data, uint32_t ret) "state=%u data=0x%x ret=0x%x"
+vul_fpga_reset(void) "device reset"
+vul_fpga_role(const char *role) "%s"
+vul_fpga_error(const char *msg) "%s"
