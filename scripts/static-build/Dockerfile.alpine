@@ -1,4 +1,10 @@
-FROM alpine:3.18
+FROM registry.test.pensando.io:5000/pensando/alpine:3.24.1
+
+ARG ALPINE_MIRROR=http://mirrors.edge.kernel.org/alpine
+ARG ALPINE_VERSION=v3.24
+RUN printf '%s/%s/main\n%s/%s/community\n' \
+        "$ALPINE_MIRROR" "$ALPINE_VERSION" \
+        "$ALPINE_MIRROR" "$ALPINE_VERSION" > /etc/apk/repositories
 
 RUN apk update && apk add --no-cache \
         attr-dev \
@@ -20,6 +26,7 @@ RUN apk update && apk add --no-cache \
         ncurses-dev \
         ncurses-static \
         ninja \
+        pcre2-static \
         perl \
         pkgconf \
         py3-pip \
