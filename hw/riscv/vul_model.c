@@ -996,6 +996,29 @@ static SiFiveSPIState *sifive_spi0_create(hwaddr addr, char *sock, bool is_serve
     return spi0;
 }
 
+/* Peripheral stubs. Reads return 0, writes are ignored. */
+static void vul_model_create_peripheral_stubs(MemoryRegion *system_memory)
+{
+    static const struct { const char *name; hwaddr base; hwaddr size; } stubs[] = {
+        { "qspi-ctrl",      0x90000,      0x400 },
+        { "gpio0",          0xd0000,      0x200 },
+        /*
+         * Not the APLIC itself: the riscv,aplic domains are modelled at
+         * APLIC_M/APLIC_S. This is the SiFive "APLIC Global Control
+         * Register" block sitting just below them, of which firmware
+         * touches a single register (a power-gating bit at offset 0).
+         */
+        { "aplic-ctrl",     0x78600000,   0x4000 },
+    };
+
+    for (int i = 0; i < ARRAY_SIZE(stubs); i++) {
+        MemoryRegion *stub = g_new(MemoryRegion, 1);
+        memory_region_init_ram(stub, NULL, stubs[i].name,
+                               stubs[i].size, &error_fatal);
+        memory_region_add_subregion(system_memory, stubs[i].base, stub);
+    }
+}
+
 static void vul_model_machine_init(MachineState *machine)
 {
     const MemMapEntry *memmap = vul_model_memmap;
@@ -1147,6 +1170,8 @@ static void vul_model_machine_init(MachineState *machine)
 
     vul_model_flash_map(s, system_memory);
     vul_model_test_flash_map(s, system_memory);
+
+    vul_model_create_peripheral_stubs(system_memory);
 
     /* load/create device tree */
     if (machine->dtb) {
