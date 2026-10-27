@@ -123,7 +123,8 @@ static bool vul_model_use_kvm_aia(RISCVVulModelState *s)
 
 #define VUL_MODEL_UART0_REG_SHIFT 2
 
-#define VUL_LLC_SIZE 0x2000000
+#define VUL_LLC_SIZE    0x2000000
+#define VUL_LLC_HI_SIZE 0x800000000
 
 static const MemMapEntry vul_model_memmap[] = {
     [VUL_MODEL_MROM] =         {      0x1000,       0xf000 }, /* not really in our model, but QEMU wants it for booting */
@@ -144,6 +145,7 @@ static const MemMapEntry vul_model_memmap[] = {
     [VUL_MODEL_TEST_FLASH] =   {  0x7f000000,    0x1000000 }, /* not in real hardware, only added for partition testing */
     [VUL_MODEL_DRAM_CC] =      {  0x80000000, VUL_LLC_SIZE },
     [VUL_MODEL_DRAM_NC] =      { 0x100000000, VUL_LLC_SIZE },
+    [VUL_MODEL_DRAM_HI_NC] =   {0x1000000000, VUL_LLC_HI_SIZE },
     [VUL_MODEL_DRAM_CC2] =     {0x8100000000, VUL_LLC_SIZE },
 };
 
@@ -1149,6 +1151,7 @@ static void vul_model_machine_init(MachineState *machine)
                                 llc_nc);
 
     s->vul_mem = vul_mem_create(memmap[VUL_MODEL_DRAM_NC].base, s->nicram_size);
+    s->vul_mem_hi = vul_mem_create(memmap[VUL_MODEL_DRAM_HI_NC].base, memmap[VUL_MODEL_DRAM_HI_NC].size);
     s->vul_csr = vul_csr_create(memmap[VUL_MODEL_CSRS].base);
     s->acc = modacc_create(memmap[VUL_MODEL_ACC].base, memmap[VUL_MODEL_ACC].size);
     s->mctp_emu = sockdma_create(memmap[VUL_MODEL_MCTP_SOCKDMA].base, memmap[VUL_MODEL_MCTP_SOCKDMA].size, s->mctp_emu_sock);

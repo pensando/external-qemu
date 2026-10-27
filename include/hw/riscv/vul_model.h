@@ -50,6 +50,7 @@ struct RISCVVulModelState {
     DeviceState *irqchip[VUL_MODEL_SOCKETS_MAX];
     DeviceState *vul_csr;
     DeviceState *vul_mem;
+    DeviceState *vul_mem_hi;
     DeviceState *acc;
     DeviceState *mctp_emu;
     DeviceState *fpga_emu;
@@ -88,6 +89,7 @@ enum {
     VUL_MODEL_SRAM,
     VUL_MODEL_DRAM_CC,
     VUL_MODEL_DRAM_NC,
+    VUL_MODEL_DRAM_HI_NC,
     VUL_MODEL_DRAM_CC2,
     VUL_MODEL_FLASH,
     VUL_MODEL_TEST_FLASH,    /* not in real hardware, only added for testing */
