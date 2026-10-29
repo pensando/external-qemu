@@ -2,6 +2,7 @@
 /build/
 /build-static/
 /dist/
+/asset.tgz
 /.cache/
 /.vscode/
 *.pyc

@@ -10,6 +10,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 IMAGE=qemu-static-builder
 BUILD_DIR=build-static
 DIST_DIR=dist
+ASSET=asset.tgz
+ASSET_PREFIX=platform/src/sim/qemu/external-qemu/build
 BINARIES="qemu-system-x86_64 qemu-system-arm qemu-system-riscv64"
 
 if [ -n "${CONTAINER_ENGINE:-}" ]; then
@@ -63,23 +65,29 @@ cd "$REPO_ROOT"
 echo
 echo "=== assembling $DIST_DIR ==="
 rm -rf "$DIST_DIR"
-mkdir -p "$DIST_DIR/qemu-bundle/usr/local/share/qemu"
+OUT_DIR="$DIST_DIR/$ASSET_PREFIX"
+mkdir -p "$OUT_DIR/qemu-bundle/usr/local/share/qemu"
 for bin in $BINARIES; do
-    cp "$BUILD_DIR/$bin" "$DIST_DIR/"
+    cp "$BUILD_DIR/$bin" "$OUT_DIR/"
 done
-cp -r pc-bios/. "$DIST_DIR/qemu-bundle/usr/local/share/qemu/"
+cp -r pc-bios/. "$OUT_DIR/qemu-bundle/usr/local/share/qemu/"
 # Drop the compressed edk2/UEFI firmware and stray build files: not needed
 # unless you boot via UEFI instead of legacy BIOS/OpenSBI, and they're most
 # of pc-bios/'s size.
-rm -f "$DIST_DIR"/qemu-bundle/usr/local/share/qemu/*.bz2 \
-      "$DIST_DIR"/qemu-bundle/usr/local/share/qemu/meson.build \
-      "$DIST_DIR"/qemu-bundle/usr/local/share/qemu/README
+rm -f "$OUT_DIR"/qemu-bundle/usr/local/share/qemu/*.bz2 \
+      "$OUT_DIR"/qemu-bundle/usr/local/share/qemu/meson.build \
+      "$OUT_DIR"/qemu-bundle/usr/local/share/qemu/README
 du -sh "$DIST_DIR"
+
+echo
+echo "=== creating $ASSET ==="
+rm -f "$ASSET"
+tar -C "$DIST_DIR" -cf - platform | gzip --best > "$ASSET"
 
 echo
 echo "=== static-linkage check ==="
 for bin in $BINARIES; do
-    path="$DIST_DIR/$bin"
+    path="$OUT_DIR/$bin"
     if [ -x "$path" ]; then
         echo "-- $bin --"
         file "$path"
