@@ -44,7 +44,8 @@ typedef struct VulFPGABUF {
         VulFPGABUFRegs regs;
         Fifo8 fifo;
     } tx, rx;
-    void *state; /* parent state */
+    bool tx_pending;   /* Data written before peer connected; flush on connect */
+    void *state;       /* parent state */
 } VulFPGABUF;
 
 /*
