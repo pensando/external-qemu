@@ -184,6 +184,11 @@ static gboolean vul_fpga_socket_watch_cb(QIOChannel *ioc, GIOCondition cond, gpo
     return TRUE;
 }
 
+static bool vul_fpga_client_connected(VulFPGAState *s)
+{
+    return s->csocket != NULL;
+}
+
 static void vul_fpga_socket_send(VulFPGAState *s, char *buf, size_t size)
 {
     QIOChannel *ioc = QIO_CHANNEL(s->csocket);
@@ -382,11 +387,20 @@ static uint32_t vul_fpga_buffer_write(VulFPGAState *s)
         } else if (data & CTRL_DONE_MASK) {
             buffer->tx.regs.ctrl = CTRL_DONE_OK;
 
-            /* Server finished writing data to FPGA, now FPGA (client) owns the buffer */
-            buffer->tx.regs.status &= ~STATUS_OWNER_MASK;
-            buffer->tx.regs.status |= STATUS_OWNER_CLIENT;
-
-            vul_fpga_process_ctrl_tx(buffer);
+            if (vul_fpga_client_connected(s)) {
+                /* Peer connected — send immediately and transfer ownership */
+                buffer->tx.regs.status &= ~STATUS_OWNER_MASK;
+                buffer->tx.regs.status |= STATUS_OWNER_CLIENT;
+                vul_fpga_process_ctrl_tx(buffer);
+            } else {
+                /* No peer connected yet.  Keep data in the FIFO and
+                 * mark the buffer as pending.  Real FPGA hardware
+                 * buffers writes until the other side reads them;
+                 * we flush when the client connects. */
+                buffer->tx_pending = true;
+                qemu_log("VulFPGA: No client, buffering TX for opcode 0x%02x\n",
+                         buffer->tx.regs.opcode);
+            }
         }
         ret = 0;
         break;
@@ -683,6 +697,30 @@ static int vul_fpga_set_cs(SSIPeripheral *ss, bool select)
     return 0;
 }
 
+static void vul_fpga_flush_pending(VulFPGAState *s)
+{
+    for (int i = 0; i < VUL_FPGABUF_NUM; i++) {
+        VulFPGABUF *buf = &s->buffers[i];
+        if (buf->tx_pending) {
+            if (buf->tx.regs.opcode == 0 || buf->tx.regs.length == 0) {
+                qemu_log("VulFPGA: Skipping empty pending buffer %d "
+                         "(opcode 0x%02x, len %d)\n",
+                         i, buf->tx.regs.opcode, buf->tx.regs.length);
+                buf->tx_pending = false;
+                continue;
+            }
+            qemu_log("VulFPGA: Flushing pending TX for buffer %d "
+                     "(opcode 0x%02x, len %d)\n",
+                     i, buf->tx.regs.opcode, buf->tx.regs.length);
+            buf->tx.regs.status &= ~STATUS_OWNER_MASK;
+            buf->tx.regs.status |= STATUS_OWNER_CLIENT;
+            vul_fpga_process_ctrl_tx(buf);
+            buf->tx_pending = false;
+        }
+    }
+    qemu_log("VulFPGA: Flush complete\n");
+}
+
 static void vul_fpga_socket_cb(QIONetListener *listener, QIOChannelSocket *sioc, gpointer data)
 {
     VulFPGAState *s = (VulFPGAState *)data;
@@ -709,6 +747,9 @@ static void vul_fpga_socket_cb(QIONetListener *listener, QIOChannelSocket *sioc,
 
     /* Register read callback */
     qio_channel_add_watch(ioc, G_IO_IN, vul_fpga_socket_watch_cb, s, NULL);
+
+    /* Flush any buffers that were written before the client connected. */
+    vul_fpga_flush_pending(s);
 }
 
 static void vul_fpga_socket_setup(VulFPGAState *s, Error **errp)
