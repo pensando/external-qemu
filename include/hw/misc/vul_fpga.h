@@ -158,6 +158,11 @@ typedef struct VulFPGAState {
 
     /* client */
     QIOChannelSocket *csocket;
+
+    /* Deferred flush: pending TX buffers are flushed after a short delay
+     * once the client connection stabilises (the ASIC QEMU may disconnect
+     * and reconnect during its init sequence). */
+    QEMUTimer *flush_timer;
 } VulFPGAState;
 
 inline static VulFPGABUF *vul_fpga_get_buffer(VulFPGAState *s, uint8_t opcode)
