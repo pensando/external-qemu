@@ -1,4 +1,5 @@
 #include "qemu/osdep.h"
+#include <signal.h>
 #include "hw/ssi/ssi.h"
 #include "hw/qdev-properties.h"
 #include "hw/misc/vul_fpga.h"
@@ -39,19 +40,35 @@ static void vul_fpga_socket_client_close(VulFPGAState *s)
     }
 }
 
+/*
+ * Read exactly @len bytes from @ioc, looping on short reads.
+ * Returns @len on success, 0 on clean disconnect, -1 on error.
+ */
+static ssize_t vul_fpga_read_full(QIOChannel *ioc, char *buf, size_t len)
+{
+    size_t done = 0;
+
+    while (done < len) {
+        ssize_t ret = qio_channel_read(ioc, buf + done, len - done, NULL);
+        if (ret <= 0) {
+            return ret;
+        }
+        done += ret;
+    }
+    return done;
+}
+
 static gboolean vul_fpga_update_reg (QIOChannel *ioc, GIOCondition cond, gpointer opaque, VulFPGAHDR *vulfpga_hdr)
 {
     VulFPGAState *s = (VulFPGAState *)opaque;
     cpld_reg reg;
-    size_t ret;
+    ssize_t ret;
     uint8_t index;
 
-    ret = qio_channel_read(ioc, (char *)&reg, vulfpga_hdr->data_size, NULL);
+    ret = vul_fpga_read_full(ioc, (char *)&reg, vulfpga_hdr->data_size);
     if (ret <= 0) {
         qemu_log("VulFPGA: Client disconnected or read error\n");
-        /* socket closed */
         vul_fpga_socket_client_close(s);
-        /* remove watch */
         return FALSE;
     }
     assert(ret == vulfpga_hdr->data_size);
@@ -65,14 +82,12 @@ static gboolean vul_fpga_update_fru (QIOChannel *ioc, GIOCondition cond, gpointe
 {
     VulFPGAState *s = (VulFPGAState *)opaque;
     uint8_t in_data[VUL_FPGA_FRU_SIZE];
-    size_t ret;
+    ssize_t ret;
 
-    ret = qio_channel_read(ioc, (char *)in_data, vulfpga_hdr->data_size, NULL);
+    ret = vul_fpga_read_full(ioc, (char *)in_data, vulfpga_hdr->data_size);
     if (ret <= 0) {
         qemu_log("VulFPGA: Client disconnected or read error\n");
-        /* socket closed */
         vul_fpga_socket_client_close(s);
-        /* remove watch */
         return FALSE;
     }
     assert(ret == vulfpga_hdr->data_size);
@@ -89,15 +104,13 @@ static gboolean vul_fpga_fifo_msg (QIOChannel *ioc, GIOCondition cond, gpointer 
     VulFPGABUF *buf;
     ssize_t ret;
 
-    ret = qio_channel_read(ioc, (char *)in_data, sizeof(in_data), NULL);
+    ret = vul_fpga_read_full(ioc, (char *)in_data, sizeof(in_data));
     if (ret <= 0) {
         qemu_log("VulFPGA: Client disconnected or read error\n");
-        /* socket closed */
         vul_fpga_socket_client_close(s);
-        /* remove watch */
         return FALSE;
     }
-    assert(ret >= sizeof(VulFPGABUFRegs));
+    assert(ret >= (ssize_t)sizeof(VulFPGABUFRegs));
 
     // Process the received data based on the opcode
     uint8_t opcode = in_regs->opcode;
@@ -151,18 +164,17 @@ static gboolean vul_fpga_fifo_msg (QIOChannel *ioc, GIOCondition cond, gpointer 
 
 static gboolean vul_fpga_socket_watch_cb(QIOChannel *ioc, GIOCondition cond, gpointer opaque)
 {
-    size_t ret;
+    ssize_t ret;
     VulFPGAState *s = (VulFPGAState *)opaque;
     VulFPGAHDR vulfpgahdr;
 
-    ret = qio_channel_read(ioc, (char *)&vulfpgahdr, VUL_FPGA_HDR_SIZE, NULL);
+    ret = vul_fpga_read_full(ioc, (char *)&vulfpgahdr, VUL_FPGA_HDR_SIZE);
     if (ret <= 0) {
         qemu_log("VulFPGA: Client disconnected or read error\n");
-        /* socket closed */
         vul_fpga_socket_client_close(s);
-        /* remove watch */
         return FALSE;
     }
+    assert(ret == VUL_FPGA_HDR_SIZE);
 
     switch(vulfpgahdr.opcode) {
     case VUL_FPGA_OP_FRU_WRITE:
@@ -184,6 +196,11 @@ static gboolean vul_fpga_socket_watch_cb(QIOChannel *ioc, GIOCondition cond, gpo
     return TRUE;
 }
 
+static bool vul_fpga_client_connected(VulFPGAState *s)
+{
+    return s->csocket != NULL;
+}
+
 static void vul_fpga_socket_send(VulFPGAState *s, char *buf, size_t size)
 {
     QIOChannel *ioc = QIO_CHANNEL(s->csocket);
@@ -194,7 +211,8 @@ static void vul_fpga_socket_send(VulFPGAState *s, char *buf, size_t size)
         return;
     }
 
-    if (qio_channel_write(ioc, buf, size, &err) <= 0) {
+    ssize_t written = qio_channel_write(ioc, buf, size, &err);
+    if (written <= 0) {
         /* A failure may happen because the other host has shut down the socket, but we haven't gotten to know that
          * because we haven't polled yet/haven't performed our side of the shutdown in case we support interrupts.
          * Whatever the reason, don't explode, free the resources associated to the socket and report the error to
@@ -382,11 +400,20 @@ static uint32_t vul_fpga_buffer_write(VulFPGAState *s)
         } else if (data & CTRL_DONE_MASK) {
             buffer->tx.regs.ctrl = CTRL_DONE_OK;
 
-            /* Server finished writing data to FPGA, now FPGA (client) owns the buffer */
-            buffer->tx.regs.status &= ~STATUS_OWNER_MASK;
-            buffer->tx.regs.status |= STATUS_OWNER_CLIENT;
-
-            vul_fpga_process_ctrl_tx(buffer);
+            if (vul_fpga_client_connected(s)) {
+                /* Peer connected — send immediately and transfer ownership */
+                buffer->tx.regs.status &= ~STATUS_OWNER_MASK;
+                buffer->tx.regs.status |= STATUS_OWNER_CLIENT;
+                vul_fpga_process_ctrl_tx(buffer);
+            } else {
+                /* No peer connected yet.  Keep data in the FIFO and
+                 * mark the buffer as pending.  Real FPGA hardware
+                 * buffers writes until the other side reads them;
+                 * we flush when the client connects. */
+                buffer->tx_pending = true;
+                qemu_log("VulFPGA: No client, buffering TX for opcode 0x%02x\n",
+                         buffer->tx.regs.opcode);
+            }
         }
         ret = 0;
         break;
@@ -683,6 +710,30 @@ static int vul_fpga_set_cs(SSIPeripheral *ss, bool select)
     return 0;
 }
 
+static void vul_fpga_flush_pending(VulFPGAState *s)
+{
+    for (int i = 0; i < VUL_FPGABUF_NUM; i++) {
+        VulFPGABUF *buf = &s->buffers[i];
+        if (buf->tx_pending) {
+            if (buf->tx.regs.opcode == 0 || buf->tx.regs.length == 0) {
+                qemu_log("VulFPGA: Skipping empty pending buffer %d "
+                         "(opcode 0x%02x, len %d)\n",
+                         i, buf->tx.regs.opcode, buf->tx.regs.length);
+                buf->tx_pending = false;
+                continue;
+            }
+            qemu_log("VulFPGA: Flushing pending TX for buffer %d "
+                     "(opcode 0x%02x, len %d)\n",
+                     i, buf->tx.regs.opcode, buf->tx.regs.length);
+            buf->tx.regs.status &= ~STATUS_OWNER_MASK;
+            buf->tx.regs.status |= STATUS_OWNER_CLIENT;
+            vul_fpga_process_ctrl_tx(buf);
+            buf->tx_pending = false;
+        }
+    }
+    qemu_log("VulFPGA: Flush complete\n");
+}
+
 static void vul_fpga_socket_cb(QIONetListener *listener, QIOChannelSocket *sioc, gpointer data)
 {
     VulFPGAState *s = (VulFPGAState *)data;
@@ -709,11 +760,17 @@ static void vul_fpga_socket_cb(QIONetListener *listener, QIOChannelSocket *sioc,
 
     /* Register read callback */
     qio_channel_add_watch(ioc, G_IO_IN, vul_fpga_socket_watch_cb, s, NULL);
+
+    /* Flush any buffers that were written before the client connected. */
+    vul_fpga_flush_pending(s);
 }
 
 static void vul_fpga_socket_setup(VulFPGAState *s, Error **errp)
 {
     Error *err = NULL;
+
+    /* Ignore SIGPIPE so a disconnecting client does not kill the server. */
+    signal(SIGPIPE, SIG_IGN);
 
     s->laddr = socket_parse(s->laddr_str, &err);
     if (err) {
