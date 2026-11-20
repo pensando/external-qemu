@@ -403,3 +403,7 @@ ivshmem_flat_interrupt_peer(uint16_t peer_id, uint16_t vector_id) "Interrupting 
 i2c_echo_event(const char *id, const char *event) "%s: %s"
 i2c_echo_recv(const char *id, uint8_t data) "%s: recv 0x%02" PRIx8
 i2c_echo_send(const char *id, uint8_t data) "%s: send 0x%02" PRIx8
+
+# pic32cz_nvm.c
+pic32cz_nvm_boot_rom(int usercfg1_seq, int usercfg2_seq, int bfm_panel) "USERCFG1 seq %d USERCFG2 seq %d: booting BFM panel %d"
+pic32cz_nvm_swap(bool bfswap, bool pfswap) "BFSWAP %d PFSWAP %d"

@@ -250,4 +250,7 @@ config SOCKDMA
 config VUL_FPGA
     bool
 
+config PIC32CZ_NVM
+    bool
+
 source macio/Kconfig
