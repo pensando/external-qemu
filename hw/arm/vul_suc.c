@@ -1527,6 +1527,7 @@ static void vul_suc_pic32cz_flash_init(VulSucMachineState *s,
         sysbus_mmio_get_region(sbd, PIC32CZ_NVM_MMIO_CFM));
     memory_region_add_subregion(system_memory, PIC32CZ_PFM_BASE,
         sysbus_mmio_get_region(sbd, PIC32CZ_NVM_MMIO_PFM));
+    sysbus_mmio_map(sbd, PIC32CZ_NVM_MMIO_FCW, PIC32CZ_FCW_BASE);
     /* The CFI flash is programmed through the swap-aware port */
     sysbus_mmio_map(sbd, PIC32CZ_NVM_MMIO_PORT, VUL_SUC_PFLASH_BASE);
 }

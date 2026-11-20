@@ -23,6 +23,11 @@
  * swap applies too (on the PIC32CZ, the swap affects writes as well), so the
  * flash partitions are seen at the same logical locations as on HW.
  *
+ * The Flash Write Controller (FCW) registers are modelled to the extent the
+ * SuC bootloader and runtime need: the mutex, busy/done status, write
+ * protection registers (stored only) and the keyed panel swap register.
+ * Program/erase operations through FCW are not implemented.
+ *
  * Copyright (c) 2026 Advanced Micro Devices, Inc. (AMD)
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
@@ -39,6 +44,25 @@
 #include "system/memory.h"
 #include "hw/misc/pic32cz_nvm.h"
 #include "trace.h"
+
+/* FCW registers (DFP component/fcw.h) */
+#define FCW_CTRLA               0x00
+#define FCW_MUTEX               0x08
+#define FCW_INTFLAG             0x14
+#define FCW_STATUS              0x18
+#define FCW_KEY                 0x1c
+#define FCW_SWAP                0x48
+
+#define FCW_INTFLAG_DONE        BIT(0)
+
+#define FCW_SWAP_BFSWAP         BIT(0)
+#define FCW_SWAP_BFSLOCK        BIT(1)
+#define FCW_SWAP_PFSWAP         BIT(8)
+#define FCW_SWAP_PFSLOCK        BIT(9)
+
+/* FCW_KEY: KEYCODE 0x91C32C in [31:8], KEYVALUE selects the unlocked function */
+#define FCW_KEY_WRKEY           0x91c32c01
+#define FCW_KEY_SWAPKEY         0x91c32c02
 
 /* FUSES_FSEQ: SEQNUM in bits [15:0], SEQBAR (inverted SEQNUM) in [31:16] */
 static int pic32cz_nvm_decode_seq(uint32_t fseq)
@@ -99,9 +123,95 @@ static void pic32cz_nvm_boot_rom(Pic32czNvmState *s)
     trace_pic32cz_nvm_boot_rom(seq1, seq2, s->bfswap ? 2 : 1);
 }
 
+static uint64_t pic32cz_nvm_fcw_read(void *opaque, hwaddr addr, unsigned size)
+{
+    Pic32czNvmState *s = opaque;
+
+    switch (addr) {
+    case FCW_INTFLAG:
+        /* Operations complete immediately and never fail */
+        return FCW_INTFLAG_DONE;
+    case FCW_STATUS:
+        /* Never busy */
+        return 0;
+    case FCW_KEY:
+        return 0;
+    case FCW_SWAP:
+        return (s->bfswap ? FCW_SWAP_BFSWAP : 0) |
+               (s->bfslock ? FCW_SWAP_BFSLOCK : 0) |
+               (s->pfswap ? FCW_SWAP_PFSWAP : 0) |
+               (s->pfslock ? FCW_SWAP_PFSLOCK : 0);
+    default:
+        return s->fcw_regs[addr / 4];
+    }
+}
+
+static void pic32cz_nvm_fcw_write(void *opaque, hwaddr addr, uint64_t value,
+                                  unsigned size)
+{
+    Pic32czNvmState *s = opaque;
+    uint32_t key = s->fcw_key;
+
+    if (addr != FCW_KEY) {
+        /* The key unlocks a single register write */
+        s->fcw_key = 0;
+    }
+
+    switch (addr) {
+    case FCW_KEY:
+        s->fcw_key = value;
+        break;
+    case FCW_INTFLAG:
+    case FCW_STATUS:
+        break;
+    case FCW_CTRLA:
+        s->fcw_regs[addr / 4] = value;
+        if (key == FCW_KEY_WRKEY && (value & 0xf)) {
+            qemu_log_mask(LOG_UNIMP, "pic32cz-nvm: FCW operation 0x%" PRIx64
+                          " not implemented, program the CFI flash instead\n",
+                          value & 0xf);
+        }
+        break;
+    case FCW_SWAP:
+        if (key != FCW_KEY_SWAPKEY) {
+            qemu_log_mask(LOG_GUEST_ERROR,
+                          "pic32cz-nvm: FCW_SWAP write without SWAPKEY\n");
+            break;
+        }
+        if (!s->bfslock) {
+            s->bfswap = value & FCW_SWAP_BFSWAP;
+            s->bfslock = value & FCW_SWAP_BFSLOCK;
+        }
+        if (!s->pfslock) {
+            s->pfswap = value & FCW_SWAP_PFSWAP;
+            s->pfslock = value & FCW_SWAP_PFSLOCK;
+        }
+        pic32cz_nvm_update_windows(s);
+        break;
+    default:
+        s->fcw_regs[addr / 4] = value;
+        break;
+    }
+}
+
+static const MemoryRegionOps pic32cz_nvm_fcw_ops = {
+    .read = pic32cz_nvm_fcw_read,
+    .write = pic32cz_nvm_fcw_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid = {
+        .min_access_size = 4,
+        .max_access_size = 4,
+    },
+};
+
 static void pic32cz_nvm_reset_hold(Object *obj, ResetType type)
 {
     Pic32czNvmState *s = PIC32CZ_NVM(obj);
+
+    memset(s->fcw_regs, 0, sizeof(s->fcw_regs));
+    s->fcw_key = 0;
+    s->bfslock = false;
+    s->pfslock = false;
 
     pic32cz_nvm_boot_rom(s);
     pic32cz_nvm_update_windows(s);
@@ -184,6 +294,10 @@ static void pic32cz_nvm_realize(DeviceState *dev, Error **errp)
     sysbus_init_mmio(sbd, &s->cfm);
     sysbus_init_mmio(sbd, &s->pfm);
 
+    memory_region_init_io(&s->fcw, OBJECT(s), &pic32cz_nvm_fcw_ops, s,
+                          "pic32cz-nvm.fcw", PIC32CZ_FCW_SIZE);
+    sysbus_init_mmio(sbd, &s->fcw);
+
     /* Logical panel A/B is at the location of physical panel A/B */
     memory_region_init(&s->port, OBJECT(s), "pic32cz-nvm.port", flash_size);
     memory_region_init_alias(&s->port_flash, OBJECT(s), "pic32cz-nvm.port.flash",
@@ -228,7 +342,7 @@ static void pic32cz_nvm_class_init(ObjectClass *klass, const void *data)
     ResettableClass *rc = RESETTABLE_CLASS(klass);
 
     dc->realize = pic32cz_nvm_realize;
-    dc->desc = "PIC32CZ NVM (BFM/CFM/PFM) windows";
+    dc->desc = "PIC32CZ NVM (BFM/CFM/PFM windows and FCW)";
     device_class_set_props(dc, pic32cz_nvm_properties);
     rc->phases.hold = pic32cz_nvm_reset_hold;
 }

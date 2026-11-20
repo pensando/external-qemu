@@ -24,6 +24,8 @@ OBJECT_DECLARE_SIMPLE_TYPE(Pic32czNvmState, PIC32CZ_NVM)
 #define PIC32CZ_BFM_BASE        0x08000000
 #define PIC32CZ_CFM_BASE        0x0A000000
 #define PIC32CZ_PFM_BASE        0x0C000000
+#define PIC32CZ_FCW_BASE        0x44002000
+#define PIC32CZ_FCW_SIZE        0x2000
 
 /* Offsets of the USERCFGx pages within CFM */
 #define PIC32CZ_CFM_USERCFG1    0x0000
@@ -34,6 +36,7 @@ enum {
     PIC32CZ_NVM_MMIO_BFM = 0,
     PIC32CZ_NVM_MMIO_CFM,
     PIC32CZ_NVM_MMIO_PFM,
+    PIC32CZ_NVM_MMIO_FCW,
     PIC32CZ_NVM_MMIO_PORT,
     PIC32CZ_NVM_MMIO_NUM
 };
@@ -54,6 +57,8 @@ struct Pic32czNvmState {
     /* Panel swap state (FCW_SWAP.BFSWAP / FCW_SWAP.PFSWAP) */
     bool bfswap;
     bool pfswap;
+    bool bfslock;
+    bool pfslock;
 
     /*
      * Programming port: the CFI flash, with the BFM/PFM panels swapped like
@@ -63,6 +68,11 @@ struct Pic32czNvmState {
     MemoryRegion port_flash;
     MemoryRegion port_bfm_panel[2];
     MemoryRegion port_pfm_panel[2];
+
+    /* Flash Write Controller (FCW) registers */
+    MemoryRegion fcw;
+    uint32_t fcw_key;
+    uint32_t fcw_regs[PIC32CZ_FCW_SIZE / 4];
 
     /* Properties */
     PFlashCFI01 *flash;
