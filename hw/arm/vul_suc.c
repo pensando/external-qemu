@@ -20,6 +20,7 @@
 #include "net/net.h"
 #include "hw/boards.h"
 #include "qemu/log.h"
+#include "qemu/bswap.h"
 #include "qemu/error-report.h"
 #include "system/address-spaces.h"
 #include "system/system.h"
@@ -1133,11 +1134,218 @@ static DeviceState *sifive_spi0_create_suc(hwaddr addr, qemu_irq irq, char *sock
     return dev;
 }
 
+/*
+ * PIC32CZ peripherals used by the SuC bootloader, as register files: writes
+ * are stored and read back, like the Vulcano peripheral stubs in vul_model.
+ * Status bits the bootloader polls for but never sets always read as set, and
+ * a software reset bit self-clears.
+ */
+typedef struct Pic32czStub {
+    const char *name;
+    hwaddr base;
+    hwaddr size;
+    hwaddr status_off;      /* register whose status_set bits always read as set */
+    uint32_t status_set;    /* 0 if no bits are forced */
+    hwaddr swrst_off;       /* register whose bit 0 (SWRST) self-clears */
+    bool has_swrst;
+} Pic32czStub;
+
+typedef struct Pic32czStubState {
+    const Pic32czStub *info;
+    MemoryRegion mr;
+    uint8_t *regs;          /* little-endian bytes, for 1/2/4-byte accesses */
+} Pic32czStubState;
+
+static void pic32cz_stub_fixup(Pic32czStubState *st)
+{
+    const Pic32czStub *info = st->info;
+
+    /* regs is a byte array: OR status_set into the 32-bit status register */
+    if (info->status_set) {
+        stl_le_p(st->regs + info->status_off,
+                 ldl_le_p(st->regs + info->status_off) | info->status_set);
+    }
+    /* SWRST is bit 0, so it is in the register's first (lowest) byte */
+    if (info->has_swrst) {
+        st->regs[info->swrst_off] &= ~1;
+    }
+}
+
+static uint64_t pic32cz_stub_read(void *opaque, hwaddr addr, unsigned size)
+{
+    Pic32czStubState *st = opaque;
+
+    return ldn_le_p(st->regs + addr, size);
+}
+
+static void pic32cz_stub_write(void *opaque, hwaddr addr, uint64_t val,
+                               unsigned size)
+{
+    Pic32czStubState *st = opaque;
+
+    stn_le_p(st->regs + addr, size, val);
+    pic32cz_stub_fixup(st);
+}
+
+static const MemoryRegionOps pic32cz_stub_ops = {
+    .read = pic32cz_stub_read,
+    .write = pic32cz_stub_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .impl = {
+        .min_access_size = 1,
+        .max_access_size = 4,
+    },
+    .valid = {
+        .min_access_size = 1,
+        .max_access_size = 4,
+    },
+};
+
+static const Pic32czStub pic32cz_stubs[] = {
+    {
+        /* DSU */
+        .name = "pic32cz.dsu",
+        .base = 0x44000000,
+        .size = 0x2000,
+        .status_off = 0,
+        .status_set = 0,
+        .swrst_off = 0,
+        .has_swrst = false,
+    },
+    {
+        /* FCR */
+        .name = "pic32cz.fcr",
+        .base = 0x44004000,
+        .size = 0x1000,
+        .status_off = 0,
+        .status_set = 0,
+        .swrst_off = 0,
+        .has_swrst = false,
+    },
+    {
+        /* PM */
+        .name = "pic32cz.pm",
+        .base = 0x44010000,
+        .size = 0x1000,
+        .status_off = 0,
+        .status_set = 0,
+        .swrst_off = 0,
+        .has_swrst = false,
+    },
+    {
+        /* SUPC_STATUS: ADDVREGRDY */
+        .name = "pic32cz.supc",
+        .base = 0x44020000,
+        .size = 0x1000,
+        .status_off = 0x0c,
+        .status_set = 0x7 << 8,
+        .swrst_off = 0,
+        .has_swrst = false,
+    },
+    {
+        /* RSTC */
+        .name = "pic32cz.rstc",
+        .base = 0x44030000,
+        .size = 0x1000,
+        .status_off = 0,
+        .status_set = 0,
+        .swrst_off = 0,
+        .has_swrst = false,
+    },
+    {
+        /* OSCCTRL_STATUS: XOSCRDY | PLL0LOCK */
+        .name = "pic32cz.oscctrl",
+        .base = 0x44040000,
+        .size = 0x2000,
+        .status_off = 0x10,
+        .status_set = BIT(0) | BIT(24),
+        .swrst_off = 0,
+        .has_swrst = false,
+    },
+    {
+        /* OSC32KCTRL */
+        .name = "pic32cz.osc32kctrl",
+        .base = 0x44042000,
+        .size = 0x1000,
+        .status_off = 0,
+        .status_set = 0,
+        .swrst_off = 0,
+        .has_swrst = false,
+    },
+    {
+        /* GCLK_CTRLA.SWRST self-clears */
+        .name = "pic32cz.gclk",
+        .base = 0x44050000,
+        .size = 0x2000,
+        .status_off = 0,
+        .status_set = 0,
+        .swrst_off = 0x00,
+        .has_swrst = true,
+    },
+    {
+        /* MCLK_INTFLAG: CKRDY */
+        .name = "pic32cz.mclk",
+        .base = 0x44052000,
+        .size = 0x1000,
+        .status_off = 0x08,
+        .status_set = BIT(0),
+        .swrst_off = 0,
+        .has_swrst = false,
+    },
+    {
+        /* WDT */
+        .name = "pic32cz.wdt",
+        .base = 0x44070000,
+        .size = 0x1000,
+        .status_off = 0,
+        .status_set = 0,
+        .swrst_off = 0,
+        .has_swrst = false,
+    },
+    {
+        /* PORT */
+        .name = "pic32cz.port",
+        .base = 0x44840000,
+        .size = 0x2000,
+        .status_off = 0,
+        .status_set = 0,
+        .swrst_off = 0,
+        .has_swrst = false,
+    },
+    {
+        /* HSM */
+        .name = "pic32cz.hsm",
+        .base = 0x4f018000,
+        .size = 0x2000,
+        .status_off = 0,
+        .status_set = 0,
+        .swrst_off = 0,
+        .has_swrst = false,
+    },
+};
+
+static void vul_suc_pic32cz_stubs_init(MemoryRegion *system_memory)
+{
+    for (int i = 0; i < ARRAY_SIZE(pic32cz_stubs); i++) {
+        const Pic32czStub *info = &pic32cz_stubs[i];
+        Pic32czStubState *st = g_new0(Pic32czStubState, 1);
+
+        st->info = info;
+        st->regs = g_malloc0(info->size);
+        pic32cz_stub_fixup(st);
+        memory_region_init_io(&st->mr, NULL, &pic32cz_stub_ops, st,
+                              info->name, info->size);
+        memory_region_add_subregion(system_memory, info->base, &st->mr);
+    }
+}
+
 /* PIC32CZ peripherals used by the SuC bootloader */
 static void vul_suc_pic32cz_peripherals_init(VulSucMachineState *s,
                                              DeviceState *nvic)
 {
     DeviceState *dev;
+
+    vul_suc_pic32cz_stubs_init(get_system_memory());
 
     /* SERCOM4: bootloader console */
     dev = qdev_new(TYPE_SERCOM_USART);
