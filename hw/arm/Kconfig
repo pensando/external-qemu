@@ -257,6 +257,7 @@ config VUL_SUC
     select SOCKDMA
     select VUL_FPGA
     select SIFIVE_SPI
+    select PIC32CZ_NVM
 
 config STM32VLDISCOVERY
     bool

@@ -20,6 +20,7 @@
 #include "net/net.h"
 #include "hw/boards.h"
 #include "qemu/log.h"
+#include "qemu/error-report.h"
 #include "system/address-spaces.h"
 #include "system/system.h"
 #include "hw/arm/armv7m.h"
@@ -38,6 +39,7 @@
 #include "hw/block/flash.h"
 #include "hw/misc/vul_fpga.h"
 #include "hw/ssi/sifive_spi.h"
+#include "hw/misc/pic32cz_nvm.h"
 
 #define GPIO_A 0
 #define GPIO_B 1
@@ -53,6 +55,20 @@
 
 #define NUM_IRQ_LINES 64
 #define VUL_SUC_FLASH_SECTOR_SIZE (4 * KiB)
+
+/* PIC32CZ PFM: two 2 MiB panels, the runtime is linked at PIC32CZ_PFM_BASE */
+#define PIC32CZ_PFM_SIZE          (4 * MiB)
+
+/* CFI flash, also backing the PIC32CZ BFM/CFM/PFM windows */
+#define VUL_SUC_PFLASH_BASE       0x60000000
+#define VUL_SUC_PFLASH_SIZE       (16 * MiB)
+
+/* SuC flash layout within the CFI flash, see gelso_emu.dts */
+#define VUL_SUC_PFLASH_CFM_OFF    0x000000
+#define VUL_SUC_PFLASH_BFM_A_OFF  0x010000
+#define VUL_SUC_PFLASH_BFM_B_OFF  0x020000
+#define VUL_SUC_PFLASH_PFM_A_OFF  0x030000
+#define VUL_SUC_PFLASH_PFM_B_OFF  0x230000
 
 typedef const struct {
     const char *name;
@@ -112,6 +128,7 @@ struct VulSucMachineState {
     bool fpga_emu_is_server;
     DeviceState *fpga_dev;
     SiFiveSPIState *spi0;
+    DeviceState *nvm;
 };
 
 /* System controller.  */
@@ -1071,9 +1088,7 @@ static void vul_suc_flash_create(VulSucMachineState *s)
     s->suc_flash = vul_suc_flash_create1(s, "vul_suc.flash1", "pflash1");
 }
 
-static void vul_suc_flash_map1(PFlashCFI01 *flash,
-                               hwaddr base, hwaddr size,
-                               MemoryRegion *sysmem)
+static void vul_suc_flash_realize(PFlashCFI01 *flash, hwaddr size)
 {
     DeviceState *dev = DEVICE(flash);
 
@@ -1081,9 +1096,6 @@ static void vul_suc_flash_map1(PFlashCFI01 *flash,
     assert(size / VUL_SUC_FLASH_SECTOR_SIZE <= UINT32_MAX);
     qdev_prop_set_uint32(dev, "num-blocks", size / VUL_SUC_FLASH_SECTOR_SIZE);
     sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
-
-    memory_region_add_subregion(sysmem, base,
-                                sysbus_mmio_get_region(SYS_BUS_DEVICE(dev), 0));
 }
 
 static DeviceState *sifive_spi0_create_suc(hwaddr addr, qemu_irq irq, char *sock,
@@ -1223,7 +1235,12 @@ static void vul_suc_init_board(MachineState *ms, vul_suc_board_info *board)
     nvic = qdev_new(TYPE_ARMV7M);
     qdev_prop_set_uint32(nvic, "num-irq", NUM_IRQ_LINES);
     qdev_prop_set_string(nvic, "cpu-type", ms->cpu_type);
-    qdev_prop_set_bit(nvic, "enable-bitband", true);
+    /*
+     * Like the PIC32CZ Boot ROM, start the bootloader from the vector table
+     * in BFM. A -kernel runtime is started directly from PFM instead.
+     */
+    qdev_prop_set_uint32(nvic, "init-nsvtor", ms->kernel_filename ?
+                         PIC32CZ_PFM_BASE : PIC32CZ_BFM_BASE);
     qdev_connect_clock_in(nvic, "cpuclk",
                           qdev_get_clock_out(ssys_dev, "SYSCLK"));
     /* This SoC does not connect the systick reference clock */
@@ -1487,7 +1504,39 @@ static void vul_suc_init_board(MachineState *ms, vul_suc_board_info *board)
             s->fpga_emu_is_server, false));
     }
 
-    armv7m_load_kernel(ARM_CPU(first_cpu), ms->kernel_filename, 0, flash_size);
+    armv7m_load_kernel(ARM_CPU(first_cpu), ms->kernel_filename,
+                       PIC32CZ_PFM_BASE, PIC32CZ_PFM_SIZE);
+}
+
+/*
+ * Model the PIC32CZ flash map used by the real SuC so that the HW bootloader
+ * and the A/B runtime images can boot from the CFI flash image.
+ */
+static void vul_suc_pic32cz_flash_init(VulSucMachineState *s,
+                                       MemoryRegion *system_memory)
+{
+    SysBusDevice *sbd;
+
+    s->nvm = qdev_new(TYPE_PIC32CZ_NVM);
+    object_property_add_child(OBJECT(s), "nvm", OBJECT(s->nvm));
+    object_property_set_link(OBJECT(s->nvm), "flash", OBJECT(s->suc_flash),
+                             &error_abort);
+    qdev_prop_set_uint32(s->nvm, "cfm-offset", VUL_SUC_PFLASH_CFM_OFF);
+    qdev_prop_set_uint32(s->nvm, "bfm-a-offset", VUL_SUC_PFLASH_BFM_A_OFF);
+    qdev_prop_set_uint32(s->nvm, "bfm-b-offset", VUL_SUC_PFLASH_BFM_B_OFF);
+    qdev_prop_set_uint32(s->nvm, "pfm-a-offset", VUL_SUC_PFLASH_PFM_A_OFF);
+    qdev_prop_set_uint32(s->nvm, "pfm-b-offset", VUL_SUC_PFLASH_PFM_B_OFF);
+    sbd = SYS_BUS_DEVICE(s->nvm);
+    sysbus_realize_and_unref(sbd, &error_fatal);
+
+    memory_region_add_subregion(system_memory, PIC32CZ_BFM_BASE,
+        sysbus_mmio_get_region(sbd, PIC32CZ_NVM_MMIO_BFM));
+    memory_region_add_subregion(system_memory, PIC32CZ_CFM_BASE,
+        sysbus_mmio_get_region(sbd, PIC32CZ_NVM_MMIO_CFM));
+    memory_region_add_subregion(system_memory, PIC32CZ_PFM_BASE,
+        sysbus_mmio_get_region(sbd, PIC32CZ_NVM_MMIO_PFM));
+    /* The CFI flash is programmed through the swap-aware port */
+    sysbus_mmio_map(sbd, PIC32CZ_NVM_MMIO_PORT, VUL_SUC_PFLASH_BASE);
 }
 
 static void vul_suc_init(MachineState *machine)
@@ -1502,7 +1551,14 @@ static void vul_suc_init(MachineState *machine)
 
     MemoryRegion *system_memory = get_system_memory();
 
-    vul_suc_flash_map1(s->suc_flash, 0x60000000, 0x1000000, system_memory);
+    vul_suc_flash_realize(s->suc_flash, VUL_SUC_PFLASH_SIZE);
+
+    if (!machine->kernel_filename && !pflash_cfi01_get_blk(s->suc_flash)) {
+        error_report("vul_suc: needs either -kernel or a flash image "
+                     "(-machine pflash1=<blockdev node>)");
+        exit(1);
+    }
+    vul_suc_pic32cz_flash_init(s, system_memory);
 
     vul_suc_init_board(machine, &vul_suc_boards[0]);
 }
@@ -1510,11 +1566,17 @@ static void vul_suc_init(MachineState *machine)
 static void vul_suc_class_init(ObjectClass *oc, const void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
+    /* The PIC32CZ CPU */
+    static const char * const valid_cpu_types[] = {
+        ARM_CPU_TYPE_NAME("cortex-m7"),
+        NULL
+    };
 
-    mc->desc = "Vulcano SuC (Cortex-M3)";
+    mc->desc = "Vulcano SuC (Cortex-M7)";
     mc->init = vul_suc_init;
     mc->ignore_memory_transaction_failures = true;
-    mc->default_cpu_type = ARM_CPU_TYPE_NAME("cortex-m3");
+    mc->default_cpu_type = ARM_CPU_TYPE_NAME("cortex-m7");
+    mc->valid_cpu_types = valid_cpu_types;
 
 
     for (int i = 0; i < ARRAY_SIZE(sockdma_infos); i++) {
