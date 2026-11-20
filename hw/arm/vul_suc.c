@@ -40,6 +40,7 @@
 #include "hw/misc/vul_fpga.h"
 #include "hw/ssi/sifive_spi.h"
 #include "hw/misc/pic32cz_nvm.h"
+#include "hw/char/sercom_usart.h"
 
 #define GPIO_A 0
 #define GPIO_B 1
@@ -53,7 +54,8 @@
 #define BP_OLED_SSI  0x02
 #define BP_GAMEPAD   0x04
 
-#define NUM_IRQ_LINES 64
+/* PIC32CZ CA peripheral interrupts (PERIPH_MAX_IRQn + 1) */
+#define PIC32CZ_NUM_IRQ_LINES 222
 #define VUL_SUC_FLASH_SECTOR_SIZE (4 * KiB)
 
 /* PIC32CZ PFM: two 2 MiB panels, the runtime is linked at PIC32CZ_PFM_BASE */
@@ -69,6 +71,12 @@
 #define VUL_SUC_PFLASH_BFM_B_OFF  0x020000
 #define VUL_SUC_PFLASH_PFM_A_OFF  0x030000
 #define VUL_SUC_PFLASH_PFM_B_OFF  0x230000
+
+/* PIC32CZ SERCOM4 (SuC console UART) */
+#define PIC32CZ_SERCOM4_BASE      0x46004000
+#define PIC32CZ_SERCOM4_0_IRQn    85
+/* Stellaris UART0-2 use serial_hd(0-2) */
+#define PIC32CZ_SERCOM4_SERIAL    3
 
 typedef const struct {
     const char *name;
@@ -1125,6 +1133,23 @@ static DeviceState *sifive_spi0_create_suc(hwaddr addr, qemu_irq irq, char *sock
     return dev;
 }
 
+/* PIC32CZ peripherals used by the SuC bootloader */
+static void vul_suc_pic32cz_peripherals_init(VulSucMachineState *s,
+                                             DeviceState *nvic)
+{
+    DeviceState *dev;
+
+    /* SERCOM4: bootloader console */
+    dev = qdev_new(TYPE_SERCOM_USART);
+    qdev_prop_set_chr(dev, "chardev", serial_hd(PIC32CZ_SERCOM4_SERIAL));
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, PIC32CZ_SERCOM4_BASE);
+    for (int i = 0; i < SERCOM_USART_NUM_IRQ; i++) {
+        sysbus_connect_irq(SYS_BUS_DEVICE(dev), i,
+                           qdev_get_gpio_in(nvic, PIC32CZ_SERCOM4_0_IRQn + i));
+    }
+}
+
 static void vul_suc_init_board(MachineState *ms, vul_suc_board_info *board)
 {
     static const int uart_irq[] = {5, 6, 33, 34};
@@ -1225,7 +1250,7 @@ static void vul_suc_init_board(MachineState *ms, vul_suc_board_info *board)
     sysbus_realize_and_unref(SYS_BUS_DEVICE(ssys_dev), &error_fatal);
 
     nvic = qdev_new(TYPE_ARMV7M);
-    qdev_prop_set_uint32(nvic, "num-irq", NUM_IRQ_LINES);
+    qdev_prop_set_uint32(nvic, "num-irq", PIC32CZ_NUM_IRQ_LINES);
     qdev_prop_set_string(nvic, "cpu-type", ms->cpu_type);
     /*
      * Like the PIC32CZ Boot ROM, start the bootloader from the vector table
@@ -1495,6 +1520,8 @@ static void vul_suc_init_board(MachineState *ms, vul_suc_board_info *board)
             qdev_get_gpio_in(nvic, 7), s->fpga_emu_sock,
             s->fpga_emu_is_server, false));
     }
+
+    vul_suc_pic32cz_peripherals_init(s, nvic);
 
     armv7m_load_kernel(ARM_CPU(first_cpu), ms->kernel_filename,
                        PIC32CZ_PFM_BASE, PIC32CZ_PFM_SIZE);

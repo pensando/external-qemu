@@ -258,6 +258,7 @@ config VUL_SUC
     select VUL_FPGA
     select SIFIVE_SPI
     select PIC32CZ_NVM
+    select SERCOM_USART
 
 config STM32VLDISCOVERY
     bool
