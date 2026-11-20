@@ -117,7 +117,7 @@ static sockdma_info sockdma_infos[] = {
     {
         .name = "sockdma-mctp",
         .description = "sockdma for mctp message passing with host",
-        .memmap = {0x44000000, 0x800},
+        .memmap = {0x50000000, 0x800},
         .set_sock_addr = SOCKDMA_SET_SOCK_ADDR_NAME(0),
     },
 };
@@ -1191,8 +1191,9 @@ static void vul_suc_init_board(MachineState *ms, vul_suc_board_info *board)
      * 400fc000 hibernation module (unimplemented)
      * 400fd000 flash memory control (unimplemented)
      * 400fe000 system control
-     * 4400_0000 - DFFF_FFFF is reserved. Use for emulated peripherals
-     * 4400_0000 - sockdma mctp
+     * 5000_0000 - emulated peripherals, after the PIC32CZ peripherals
+     * 5000_0000 - sockdma mctp
+     * 5000_0800 - FPGA SPI
      */
 
     DeviceState *gpio_dev[7], *nvic;
@@ -1516,7 +1517,7 @@ static void vul_suc_init_board(MachineState *ms, vul_suc_board_info *board)
     create_unimplemented_device("flash-control", 0x400fd000, 0x1000);
 
     if (s->fpga_emu_sock) {
-        s->spi0 = SIFIVE_SPI(sifive_spi0_create_suc(0x44000800,
+        s->spi0 = SIFIVE_SPI(sifive_spi0_create_suc(0x50000800,
             qdev_get_gpio_in(nvic, 7), s->fpga_emu_sock,
             s->fpga_emu_is_server, false));
     }
