@@ -55,6 +55,8 @@
 #define BP_OLED_SSI  0x02
 #define BP_GAMEPAD   0x04
 
+/* PIC32CZ CA CPU clock */
+#define PIC32CZ_CPU_HZ 300000000
 /* PIC32CZ CA peripheral interrupts (PERIPH_MAX_IRQn + 1) */
 #define PIC32CZ_NUM_IRQ_LINES 222
 #define VUL_SUC_FLASH_SECTOR_SIZE (4 * KiB)
@@ -1412,6 +1414,7 @@ static void vul_suc_init_board(MachineState *ms, vul_suc_board_info *board)
     I2CBus *i2c;
     DeviceState *dev;
     DeviceState *ssys_dev;
+    Clock *cpuclk;
     int i;
     int j;
     NICInfo *nd;
@@ -1467,8 +1470,13 @@ static void vul_suc_init_board(MachineState *ms, vul_suc_board_info *board)
      */
     qdev_prop_set_uint32(nvic, "init-nsvtor", ms->kernel_filename ?
                          PIC32CZ_PFM_BASE : PIC32CZ_BFM_BASE);
-    qdev_connect_clock_in(nvic, "cpuclk",
-                          qdev_get_clock_out(ssys_dev, "SYSCLK"));
+    /*
+     * The SuC bootloader and runtime program SysTick for the PIC32CZ
+     * 300 MHz CPU clock, so run SysTick at that rate.
+     */
+    cpuclk = clock_new(OBJECT(ms), "pic32cz-cpuclk");
+    clock_set_hz(cpuclk, PIC32CZ_CPU_HZ);
+    qdev_connect_clock_in(nvic, "cpuclk", cpuclk);
     /* This SoC does not connect the systick reference clock */
     object_property_set_link(OBJECT(nvic), "memory",
                              OBJECT(get_system_memory()), &error_abort);
