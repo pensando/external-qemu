@@ -1175,7 +1175,6 @@ static void vul_suc_init_board(MachineState *ms, vul_suc_board_info *board)
     qemu_irq gpio_out[7][8];
     qemu_irq adc;
     int sram_size;
-    int flash_size;
     I2CBus *i2c;
     DeviceState *dev;
     DeviceState *ssys_dev;
@@ -1185,18 +1184,11 @@ static void vul_suc_init_board(MachineState *ms, vul_suc_board_info *board)
     MACAddr mac;
 
     MemoryRegion *sram = g_new(MemoryRegion, 1);
-    MemoryRegion *flash = g_new(MemoryRegion, 1);
     MemoryRegion *system_memory = get_system_memory();
 
     VulSucMachineState *s = VUL_SUC_MACHINE(ms);
 
-    flash_size = (((board->dc0 & 0xffff) + 1) << 1) * 1024;
     sram_size = ((board->dc0 >> 18) + 1) * 1024;
-
-    /* Flash programming is done via the SCU, so pretend it is ROM.  */
-    memory_region_init_rom(flash, NULL, "vul_suc.flash", flash_size,
-                           &error_fatal);
-    memory_region_add_subregion(system_memory, 0, flash);
 
     memory_region_init_ram(sram, NULL, "vul_suc.sram", sram_size,
                            &error_fatal);
