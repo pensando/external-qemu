@@ -18,6 +18,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(VulFPGAState, VUL_FPGA)
 #define VUL_FPGABUF_FIFO_SIZE 528 // Max size of FPGA buffer
 #define VUL_FPGABUF_MCTP_SIZE 528
 #define VUL_FPGABUF_CMD_SIZE  528
+#define VUL_FPGABUF_RAS_SIZE  1024
 #define VUL_FPGA_MAX_COMMAND_SIZE (sizeof(uint8_t) + sizeof(uint16_t) + VUL_FPGABUF_FIFO_SIZE)
 
 typedef enum VulFPGAOpcodes {
@@ -113,7 +114,9 @@ inline static bool vul_fpga_fifo_command(uint8_t opcode)
     return opcode == VUL_FPGA_OP_MCTP_WRITE ||
            opcode == VUL_FPGA_OP_MCTP_READ ||
            opcode == VUL_FPGA_OP_CMD_WRITE ||
-           opcode == VUL_FPGA_OP_CMD_READ;
+           opcode == VUL_FPGA_OP_CMD_READ ||
+           opcode == VUL_FPGA_OP_RAS_WRITE ||
+           opcode == VUL_FPGA_OP_RAS_READ;
 }
 
 typedef struct VulFPGACommand {
@@ -169,6 +172,9 @@ inline static VulFPGABUF *vul_fpga_get_buffer(VulFPGAState *s, uint8_t opcode)
         case VUL_FPGA_OP_CMD_WRITE:
         case VUL_FPGA_OP_CMD_READ:
             return &s->buffers[VUL_FPGABUF_CMD];
+        case VUL_FPGA_OP_RAS_WRITE:
+        case VUL_FPGA_OP_RAS_READ:
+            return &s->buffers[VUL_FPGABUF_RAS];
         default:
             return NULL;
     }

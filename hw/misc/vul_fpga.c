@@ -27,6 +27,16 @@ static VulFPGABUF buffers[] = {
             .size = VUL_FPGABUF_CMD_SIZE,
             .opcode = VUL_FPGA_OP_CMD_READ,
         },
+    },
+    [VUL_FPGABUF_RAS] = {
+        .tx.regs = {
+            .size = VUL_FPGABUF_RAS_SIZE,
+            .opcode = VUL_FPGA_OP_RAS_WRITE,
+        },
+        .rx.regs = {
+            .size = VUL_FPGABUF_RAS_SIZE,
+            .opcode = VUL_FPGA_OP_RAS_READ,
+        },
     }
 };
 
@@ -573,10 +583,10 @@ static uint32_t vul_fpga_process_write(VulFPGAState *s)
         break;
     case VUL_FPGA_OP_MCTP_WRITE:
     case VUL_FPGA_OP_CMD_WRITE:
+    case VUL_FPGA_OP_RAS_WRITE:
         return vul_fpga_buffer_write(s);
     case VUL_FPGA_OP_J2C_WRITE:
     case VUL_FPGA_OP_UART_WRITE:
-    case VUL_FPGA_OP_RAS_WRITE:
         /* Not implemented yet */
         qemu_log("VulFPGA:%s Command opcode 0x%02X not implemented yet\n", __func__,opcode);
         break;
@@ -605,10 +615,10 @@ static uint32_t vul_fpga_process_read(VulFPGAState *s)
         break;
     case VUL_FPGA_OP_MCTP_READ:
     case VUL_FPGA_OP_CMD_READ:
+    case VUL_FPGA_OP_RAS_READ:
         return vul_fpga_buffer_read(s);
     case VUL_FPGA_OP_J2C_READ:
     case VUL_FPGA_OP_UART_READ:
-    case VUL_FPGA_OP_RAS_READ:
         /* Not implemented yet */
         qemu_log("VulFPGA:%s Command opcode 0x%02X not implemented yet\n", __func__,opcode);
         break;
