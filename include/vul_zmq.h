@@ -26,4 +26,6 @@ void vul_zmq_rst_mem(uint64_t addr, uint32_t size);
 
 void vul_zmq_step_db(uint64_t addr, uint64_t data);
 
+void vul_zmq_model_reset(void);
+
 #endif // __UTIL_VUL_UTIL_H

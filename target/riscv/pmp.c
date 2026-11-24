@@ -167,12 +167,16 @@ static bool pmp_write_cfg(CPURISCVState *env, uint32_t pmp_index, uint8_t val)
 
 void pmp_unlock_entries(CPURISCVState *env)
 {
-    uint32_t pmp_num = pmp_get_num_rules(env);
+    uint8_t pmp_regions = riscv_cpu_cfg(env)->pmp_regions;
     int i;
 
-    for (i = 0; i < pmp_num; i++) {
-        env->pmp_state.pmp[i].cfg_reg &= ~(PMP_LOCK | PMP_AMATCH);
+    for (i = 0; i < pmp_regions; i++) {
+        env->pmp_state.pmp[i].cfg_reg = 0;
+        env->pmp_state.pmp[i].addr_reg = 0;
+        env->pmp_state.addr[i].sa = 0;
+        env->pmp_state.addr[i].ea = 0;
     }
+    env->pmp_state.num_rules = 0;
 }
 
 static void pmp_decode_napot(hwaddr a, hwaddr *sa, hwaddr *ea)
@@ -342,7 +346,13 @@ bool pmp_hart_has_privs(CPURISCVState *env, hwaddr addr,
 
     /* Short cut if no rules */
     if (0 == pmp_get_num_rules(env)) {
-        return pmp_hart_has_privs_default(env, privs, allowed_privs, mode);
+        bool ret = pmp_hart_has_privs_default(env, privs, allowed_privs, mode);
+        if (!ret) {
+            fprintf(stderr, "PMP: default denied addr=0x%" PRIx64 " mode=%d mmwp=%d mml=%d\n",
+                    (uint64_t)addr, (int)mode,
+                    (int)MSECCFG_MMWP_ISSET(env), (int)MSECCFG_MML_ISSET(env));
+        }
+        return ret;
     }
 
     if (size == 0) {

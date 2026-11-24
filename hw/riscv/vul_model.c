@@ -1167,6 +1167,19 @@ static void vul_model_machine_init(MachineState *machine)
     /* Create SPI0 device and populate its peripherals */
     s->spi0 = sifive_spi0_create(memmap[VUL_MODEL_SPI0].base, s->fpga_emu_sock, s->fpga_emu_is_server, s->is_soc);
 
+    /* When running as FPGA client (SuC controls power), start with CPUs
+     * halted.  The SuC's VFSM will send a POWER_ON message via the FPGA
+     * socket to resume them.  The QEMU event loop stays active so the
+     * socket callback can fire. */
+    if (s->fpga_emu_sock && !s->fpga_emu_is_server) {
+        CPUState *cpu;
+        CPU_FOREACH(cpu) {
+            cpu->start_powered_off = true;
+            cpu->halted = true;
+        }
+        qemu_log("VulFPGA: CPUs powered off, waiting for SuC POWER_ON\n");
+    }
+
     serial_mm_init(system_memory, memmap[VUL_MODEL_UART0].base,
                    VUL_MODEL_UART0_REG_SHIFT, qdev_get_gpio_in(mmio_irqchip, UART0_IRQ), 399193,
                    serial_hd(0), DEVICE_LITTLE_ENDIAN);

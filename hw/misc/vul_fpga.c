@@ -3,6 +3,13 @@
 #include "hw/qdev-properties.h"
 #include "hw/misc/vul_fpga.h"
 #include "hw/misc/vul_cpldreg.h"
+#include "system/runstate.h"
+#include "hw/core/cpu.h"
+
+/* vul_zmq is only linked into the RISC-V (vul_model) binary; provide
+ * a weak fallback so the ARM (vul_suc) build links without it. */
+#include "vul_zmq.h"
+void __attribute__((weak)) vul_zmq_model_reset(void) {}
 
 #define VUL_FPGABUF_BUFFER_SIZE (sizeof(VulFPGABUFRegs) + VUL_FPGABUF_FIFO_SIZE)
 #define LISTENER_BACKLOG 1
@@ -46,6 +53,11 @@ static void vul_fpga_socket_client_close(VulFPGAState *s)
         qemu_log("VulFPGA: Closing client socket\n");
         object_unref(OBJECT(s->csocket));
         s->csocket = NULL;
+
+        /* Board model: ASIC disconnected — clear power good. */
+        if (s->is_server) {
+            s->regs[CPLD_REG_DPU_STAT0].val &= ~CPLD_STAT0_MAIN_PWR_OK;
+        }
     }
 }
 
@@ -185,10 +197,64 @@ static gboolean vul_fpga_socket_watch_cb(QIOChannel *ioc, GIOCondition cond, gpo
     case VUL_FPGA_OP_MCTP_READ:
     case VUL_FPGA_OP_CMD_WRITE:
     case VUL_FPGA_OP_CMD_READ:
+    case VUL_FPGA_OP_RAS_WRITE:
+    case VUL_FPGA_OP_RAS_READ:
         ret = vul_fpga_fifo_msg(ioc, cond, opaque);
         break;
-    default:
-        qemu_log("Vulfpga invalid opcode 0x%x\n", vulfpgahdr.opcode);
+    case VUL_FPGA_OP_POWER_CTRL: {
+        uint8_t action;
+        CPUState *cpu;
+        ret = qio_channel_read(ioc, (char *)&action, 1, NULL);
+        if (ret <= 0) break;
+        assert(ret == 1);
+        switch (action) {
+        case VUL_FPGA_POWER_ON:
+            qemu_log("VulFPGA: received POWER_ON — resuming CPUs\n");
+            CPU_FOREACH(cpu) {
+                cpu->start_powered_off = false;
+                cpu_resume(cpu);
+            }
+            if (s->powered_off) {
+                s->powered_off = false;
+                s->warm_reset = true;
+                qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
+            }
+            break;
+        case VUL_FPGA_POWER_OFF:
+            qemu_log("VulFPGA: received POWER_OFF — pausing CPUs\n");
+            s->powered_off = true;
+            CPU_FOREACH(cpu) {
+                cpu_pause(cpu);
+            }
+            break;
+        case VUL_FPGA_WARM_RESET:
+            qemu_log("VulFPGA: received WARM_RESET — resetting model and CPUs\n");
+            if (s->is_soc) {
+                vul_zmq_model_reset();
+            }
+            /* Deferred system reset.  warm_reset flag tells vul_fpga_reset()
+             * to keep the socket alive — the FPGA link persists across
+             * ASIC warm resets on real HW. */
+            s->warm_reset = true;
+            qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
+            break;
+        default:
+            qemu_log("VulFPGA: unknown power action %d\n", action);
+        }
+        break;
+    }
+    default: {
+        /* Consume and discard the payload to keep the socket framing
+         * intact.  Without this, the unread payload bytes are
+         * interpreted as the next message header, corrupting the stream. */
+        char discard[VUL_FPGABUF_BUFFER_SIZE];
+        size_t to_read = vulfpgahdr.data_size;
+        if (to_read > sizeof(discard))
+            to_read = sizeof(discard);
+        if (to_read > 0)
+            qio_channel_read(ioc, discard, to_read, NULL);
+        break;
+    }
     }
 
     return TRUE;
@@ -464,6 +530,53 @@ static void  vul_fpga_fru_complete(VulFPGAState *s)
     return;
 }
 
+/* Send a power control message to the peer (ASIC). */
+static void vul_fpga_send_power_ctrl(VulFPGAState *s, uint8_t action)
+{
+    char out_buf[VUL_FPGA_HDR_SIZE + 1] = { 0 };
+    VulFPGAHDR hdr = { .opcode = VUL_FPGA_OP_POWER_CTRL, .data_size = 1 };
+
+    memcpy(out_buf, &hdr, VUL_FPGA_HDR_SIZE);
+    out_buf[VUL_FPGA_HDR_SIZE] = action;
+
+    qemu_log("VulFPGA: sending power control: %s\n",
+             action == VUL_FPGA_POWER_ON  ? "POWER_ON" :
+             action == VUL_FPGA_POWER_OFF ? "POWER_OFF" :
+             action == VUL_FPGA_WARM_RESET ? "WARM_RESET" : "UNKNOWN");
+
+    vul_fpga_socket_send(s, out_buf, sizeof(out_buf));
+}
+
+/*
+ * Check whether a CPLD register write implies a power state change and
+ * send the corresponding control message to the ASIC QEMU.
+ */
+static void vul_fpga_check_power_transition(VulFPGAState *s,
+                                             uint8_t addr,
+                                             uint8_t old_val,
+                                             uint8_t new_val)
+{
+    if (!s->is_server || !s->csocket) {
+        return; /* only the server (SuC) drives power */
+    }
+
+    if (addr == CPLD_REG_CTRL) {
+        bool was_off = (old_val & CPLD_CTRL_POWER_MASK) != 0;
+        bool now_off = (new_val & CPLD_CTRL_POWER_MASK) != 0;
+
+        if (was_off && !now_off) {
+            vul_fpga_send_power_ctrl(s, VUL_FPGA_POWER_ON);
+        } else if (!was_off && now_off) {
+            vul_fpga_send_power_ctrl(s, VUL_FPGA_POWER_OFF);
+        }
+    } else if (addr == CPLD_REG_DPU_CTRL2) {
+        /* Detect rising edge on bit 7 (warm reset pulse) */
+        if (!(old_val & (1 << 7)) && (new_val & (1 << 7))) {
+            vul_fpga_send_power_ctrl(s, VUL_FPGA_WARM_RESET);
+        }
+    }
+}
+
 /* this updates the register on another end */
 static void  vul_fpga_reg_update(VulFPGAState *s, cpld_reg *reg)
 {
@@ -515,6 +628,8 @@ static int vul_fpga_process_reg_write(VulFPGAState *s)
         }
 
     }
+    uint8_t old_val = s->regs[addr].val;
+
     if (wc_flag == true) {
         s->regs[addr].val = (s->regs[addr].val ^ s->command.data);
     } else {
@@ -522,6 +637,7 @@ static int vul_fpga_process_reg_write(VulFPGAState *s)
     }
 
     vul_fpga_reg_update(s, &(s->regs[addr]));
+    vul_fpga_check_power_transition(s, addr, old_val, s->regs[addr].val);
     return 0;
 }
 
@@ -755,6 +871,17 @@ static void vul_fpga_socket_cb(QIONetListener *listener, QIOChannelSocket *sioc,
     }
     qemu_log("Client connected to VulFPGA socket\n");
 
+    /* Board model: ASIC is now connected — report power good. */
+    if (s->is_server) {
+        s->regs[CPLD_REG_DPU_STAT0].val |= CPLD_STAT0_MAIN_PWR_OK;
+
+        /* If the SuC has already powered on (VFSM ran before client
+         * connected), send the POWER_ON now. */
+        if (!(s->regs[CPLD_REG_CTRL].val & CPLD_CTRL_POWER_MASK)) {
+            vul_fpga_send_power_ctrl(s, VUL_FPGA_POWER_ON);
+        }
+    }
+
     /* Register read callback */
     qio_channel_add_watch(ioc, G_IO_IN, vul_fpga_socket_watch_cb, s, NULL);
 
@@ -873,6 +1000,7 @@ static void vul_fpga_realize(SSIPeripheral *ss, Error **errp)
 
     if (s->is_soc) {
         s->is_suc = false;
+        s->powered_off = true;  /* SoC starts powered off until SuC POWER_ON */
         qemu_log("VulFPGA SOC\n");
     } else {
         qemu_log("VulFPGA SUC\n");
@@ -886,6 +1014,16 @@ static void vul_fpga_realize(SSIPeripheral *ss, Error **errp)
     /* initialize cpld registers*/
     memset(s->regs, 0, sizeof(s->regs));
     cpld_regs_init(s->regs);
+
+    /* Board model: set initial power state.
+     * On real HW the ASIC starts powered off with reset held.
+     * The SuC VFSM releases these bits to power on the ASIC. */
+    if (s->is_server) {
+        s->regs[CPLD_REG_CTRL].val |= CPLD_CTRL_POWER_MASK; /* power off + reset held */
+        s->regs[CPLD_REG_DPU_STAT0].val &= ~CPLD_STAT0_MAIN_PWR_OK; /* no power good */
+        s->regs[CPLD_REG_REVISION].val = 0x03; /* CPLD major version */
+        s->regs[CPLD_REG_REV_MINOR].val = 0x01; /* CPLD minor version */
+    }
 }
 
 static void vul_fpga_unrealize(DeviceState *dev)
@@ -914,6 +1052,17 @@ static void vul_fpga_reset(DeviceState *dev)
         VulFPGABUF *buf = &s->buffers[i];
         fifo8_reset(&buf->tx.fifo);
         fifo8_reset(&buf->rx.fifo);
+        /* Clear register state so status bits match the empty FIFOs */
+        memset(&buf->tx.regs, 0, sizeof(buf->tx.regs));
+        memset(&buf->rx.regs, 0, sizeof(buf->rx.regs));
+    }
+
+    /* On warm reset keep the socket alive — the FPGA link persists
+     * across ASIC resets on real HW. */
+    if (s->warm_reset) {
+        s->warm_reset = false;
+        qemu_log("VulFPGA: warm reset — keeping socket connection\n");
+        return;
     }
 
     vul_fpga_socket_client_close(s);

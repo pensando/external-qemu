@@ -38,8 +38,29 @@ typedef enum VulFPGAOpcodes {
     VUL_FPGA_OP_FRU_READ,
     VUL_FPGA_OP_RAS_WRITE,
     VUL_FPGA_OP_RAS_READ,
+    VUL_FPGA_OP_POWER_CTRL,
     VUL_FPGA_OP_MAX,
 } VulFPGAOpcodes;
+
+/* Power control actions (payload of VUL_FPGA_OP_POWER_CTRL messages) */
+#define VUL_FPGA_POWER_ON    1
+#define VUL_FPGA_POWER_OFF   2
+#define VUL_FPGA_WARM_RESET  3
+
+/* CPLD register offsets used by the board model */
+#define CPLD_REG_REVISION       0x00
+#define CPLD_REG_REV_MINOR      0x01
+#define CPLD_REG_CTRL           0x02
+#define CPLD_REG_DPU_CTRL2      0x10
+#define CPLD_REG_DPU_STAT0      0x12
+
+/* CPLD_REGISTER_CTRL bit fields */
+#define CPLD_CTRL_HOLD_RESET    (1 << 3)
+#define CPLD_CTRL_HOLD_PWR_OFF  (1 << 4)
+#define CPLD_CTRL_POWER_MASK    (CPLD_CTRL_HOLD_RESET | CPLD_CTRL_HOLD_PWR_OFF)
+
+/* CPLD_REGISTER_DPU_STAT0 bit fields */
+#define CPLD_STAT0_MAIN_PWR_OK  (1 << 3)
 
 #define VUL_FPGA_COMMAND_OP_MASK         (BIT(5) - 1)
 #define VUL_FPGA_COMMAND_OPCODE(dsel_op) ((dsel_op) & VUL_FPGA_COMMAND_OP_MASK)
@@ -158,6 +179,8 @@ typedef struct VulFPGAState {
     QIONetListener *lsocket;
     bool  is_suc;
     bool  is_soc;
+    bool  warm_reset;   /* Skip socket close during system reset */
+    bool  powered_off;  /* CPUs halted by POWER_OFF */
 
     /* client */
     QIOChannelSocket *csocket;

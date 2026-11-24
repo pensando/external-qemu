@@ -39,6 +39,9 @@ typedef enum vul_model_msg_opcode_e {
     VUL_MODEL_MSG_OPCODE_SET_LOG_LEVEL = 26,
     VUL_MODEL_MSG_OPCODE_SET_TIME = 27,
     VUL_MODEL_MSG_OPCODE_GET_TIME = 28,
+    VUL_MODEL_MSG_OPCODE_PCIE_CFGRD = 29,
+    VUL_MODEL_MSG_OPCODE_PCIE_CFGWR = 30,
+    VUL_MODEL_MSG_OPCODE_MODEL_RESET = 31,
 } vul_model_msg_opcode_t;
 
 typedef struct vul_model_port_s {
@@ -389,4 +392,32 @@ void vul_zmq_step_db(uint64_t addr, uint64_t data)
                 __func__, addr, msg->type, msg->status, data);
         exit(1);
     }
+}
+
+void vul_zmq_model_reset(void)
+{
+    vul_model_msg_t *msg = (vul_model_msg_t *)ctx.msg_buf;
+    int rc;
+
+    memset(msg, 0, sizeof(*msg));
+    msg->type = VUL_MODEL_MSG_OPCODE_MODEL_RESET;
+
+    fprintf(stderr, "VulFPGA: sending MODEL_RESET to ZMQ...\n");
+    rc = zmq_send(ctx.zmq_socket, msg, sizeof(*msg), 0);
+    if (rc < 0) {
+        fprintf(stderr, "VulFPGA: zmq_send MODEL_RESET failed: %s\n",
+                zmq_strerror(zmq_errno()));
+        return;
+    }
+    fprintf(stderr, "VulFPGA: MODEL_RESET sent, waiting for response...\n");
+
+    rc = zmq_recv(ctx.zmq_socket, msg, sizeof(*msg), 0);
+    if (rc < 0) {
+        fprintf(stderr, "VulFPGA: zmq_recv MODEL_RESET failed: %s\n",
+                zmq_strerror(zmq_errno()));
+        return;
+    }
+
+    fprintf(stderr, "VulFPGA: model reset %s (status=%d)\n",
+            msg->status == 0 ? "OK" : "FAILED", msg->status);
 }

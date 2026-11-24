@@ -758,9 +758,7 @@ static void riscv_cpu_reset_hold(Object *obj, ResetType type)
      * This is allowed as per the priv and smepmp specifications
      * and is needed to clear stale entries across reboots.
      */
-    if (riscv_cpu_cfg(env)->ext_smepmp) {
-        env->mseccfg = 0;
-    }
+    env->mseccfg = 0;
 
     pmp_unlock_entries(env);
 #else
