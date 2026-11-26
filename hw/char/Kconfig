@@ -15,6 +15,9 @@ config PL011
     select PL011_C if !HAVE_RUST
     select X_PL011_RUST if HAVE_RUST
 
+config SERCOM_USART
+    bool
+
 config PL011_C
     bool
 

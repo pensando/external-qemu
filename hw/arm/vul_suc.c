@@ -20,6 +20,8 @@
 #include "net/net.h"
 #include "hw/boards.h"
 #include "qemu/log.h"
+#include "qemu/bswap.h"
+#include "qemu/error-report.h"
 #include "system/address-spaces.h"
 #include "system/system.h"
 #include "hw/arm/armv7m.h"
@@ -38,6 +40,8 @@
 #include "hw/block/flash.h"
 #include "hw/misc/vul_fpga.h"
 #include "hw/ssi/sifive_spi.h"
+#include "hw/misc/pic32cz_nvm.h"
+#include "hw/char/sercom_usart.h"
 
 #define GPIO_A 0
 #define GPIO_B 1
@@ -51,8 +55,31 @@
 #define BP_OLED_SSI  0x02
 #define BP_GAMEPAD   0x04
 
-#define NUM_IRQ_LINES 64
+/* PIC32CZ CA CPU clock */
+#define PIC32CZ_CPU_HZ 300000000
+/* PIC32CZ CA peripheral interrupts (PERIPH_MAX_IRQn + 1) */
+#define PIC32CZ_NUM_IRQ_LINES 222
 #define VUL_SUC_FLASH_SECTOR_SIZE (4 * KiB)
+
+/* PIC32CZ PFM: two 2 MiB panels, the runtime is linked at PIC32CZ_PFM_BASE */
+#define PIC32CZ_PFM_SIZE          (4 * MiB)
+
+/* CFI flash, also backing the PIC32CZ BFM/CFM/PFM windows */
+#define VUL_SUC_PFLASH_BASE       0x60000000
+#define VUL_SUC_PFLASH_SIZE       (16 * MiB)
+
+/* SuC flash layout within the CFI flash, see gelso_emu.dts */
+#define VUL_SUC_PFLASH_CFM_OFF    0x000000
+#define VUL_SUC_PFLASH_BFM_A_OFF  0x010000
+#define VUL_SUC_PFLASH_BFM_B_OFF  0x020000
+#define VUL_SUC_PFLASH_PFM_A_OFF  0x030000
+#define VUL_SUC_PFLASH_PFM_B_OFF  0x230000
+
+/* PIC32CZ SERCOM4 (SuC console UART) */
+#define PIC32CZ_SERCOM4_BASE      0x46004000
+#define PIC32CZ_SERCOM4_0_IRQn    85
+/* Stellaris UART0-2 use serial_hd(0-2) */
+#define PIC32CZ_SERCOM4_SERIAL    3
 
 typedef const struct {
     const char *name;
@@ -93,7 +120,7 @@ static sockdma_info sockdma_infos[] = {
     {
         .name = "sockdma-mctp",
         .description = "sockdma for mctp message passing with host",
-        .memmap = {0x44000000, 0x800},
+        .memmap = {0x50000000, 0x800},
         .set_sock_addr = SOCKDMA_SET_SOCK_ADDR_NAME(0),
     },
 };
@@ -112,6 +139,7 @@ struct VulSucMachineState {
     bool fpga_emu_is_server;
     DeviceState *fpga_dev;
     SiFiveSPIState *spi0;
+    DeviceState *nvm;
 };
 
 /* System controller.  */
@@ -1071,9 +1099,7 @@ static void vul_suc_flash_create(VulSucMachineState *s)
     s->suc_flash = vul_suc_flash_create1(s, "vul_suc.flash1", "pflash1");
 }
 
-static void vul_suc_flash_map1(PFlashCFI01 *flash,
-                               hwaddr base, hwaddr size,
-                               MemoryRegion *sysmem)
+static void vul_suc_flash_realize(PFlashCFI01 *flash, hwaddr size)
 {
     DeviceState *dev = DEVICE(flash);
 
@@ -1081,9 +1107,6 @@ static void vul_suc_flash_map1(PFlashCFI01 *flash,
     assert(size / VUL_SUC_FLASH_SECTOR_SIZE <= UINT32_MAX);
     qdev_prop_set_uint32(dev, "num-blocks", size / VUL_SUC_FLASH_SECTOR_SIZE);
     sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
-
-    memory_region_add_subregion(sysmem, base,
-                                sysbus_mmio_get_region(SYS_BUS_DEVICE(dev), 0));
 }
 
 static DeviceState *sifive_spi0_create_suc(hwaddr addr, qemu_irq irq, char *sock,
@@ -1111,6 +1134,230 @@ static DeviceState *sifive_spi0_create_suc(hwaddr addr, qemu_irq irq, char *sock
     }
 
     return dev;
+}
+
+/*
+ * PIC32CZ peripherals used by the SuC bootloader, as register files: writes
+ * are stored and read back, like the Vulcano peripheral stubs in vul_model.
+ * Status bits the bootloader polls for but never sets always read as set, and
+ * a software reset bit self-clears.
+ */
+typedef struct Pic32czStub {
+    const char *name;
+    hwaddr base;
+    hwaddr size;
+    hwaddr status_off;      /* register whose status_set bits always read as set */
+    uint32_t status_set;    /* 0 if no bits are forced */
+    hwaddr swrst_off;       /* register whose bit 0 (SWRST) self-clears */
+    bool has_swrst;
+} Pic32czStub;
+
+typedef struct Pic32czStubState {
+    const Pic32czStub *info;
+    MemoryRegion mr;
+    uint8_t *regs;          /* little-endian bytes, for 1/2/4-byte accesses */
+} Pic32czStubState;
+
+static void pic32cz_stub_fixup(Pic32czStubState *st)
+{
+    const Pic32czStub *info = st->info;
+
+    /* regs is a byte array: OR status_set into the 32-bit status register */
+    if (info->status_set) {
+        stl_le_p(st->regs + info->status_off,
+                 ldl_le_p(st->regs + info->status_off) | info->status_set);
+    }
+    /* SWRST is bit 0, so it is in the register's first (lowest) byte */
+    if (info->has_swrst) {
+        st->regs[info->swrst_off] &= ~1;
+    }
+}
+
+static uint64_t pic32cz_stub_read(void *opaque, hwaddr addr, unsigned size)
+{
+    Pic32czStubState *st = opaque;
+
+    return ldn_le_p(st->regs + addr, size);
+}
+
+static void pic32cz_stub_write(void *opaque, hwaddr addr, uint64_t val,
+                               unsigned size)
+{
+    Pic32czStubState *st = opaque;
+
+    stn_le_p(st->regs + addr, size, val);
+    pic32cz_stub_fixup(st);
+}
+
+static const MemoryRegionOps pic32cz_stub_ops = {
+    .read = pic32cz_stub_read,
+    .write = pic32cz_stub_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .impl = {
+        .min_access_size = 1,
+        .max_access_size = 4,
+    },
+    .valid = {
+        .min_access_size = 1,
+        .max_access_size = 4,
+    },
+};
+
+static const Pic32czStub pic32cz_stubs[] = {
+    {
+        /* DSU */
+        .name = "pic32cz.dsu",
+        .base = 0x44000000,
+        .size = 0x2000,
+        .status_off = 0,
+        .status_set = 0,
+        .swrst_off = 0,
+        .has_swrst = false,
+    },
+    {
+        /* FCR */
+        .name = "pic32cz.fcr",
+        .base = 0x44004000,
+        .size = 0x1000,
+        .status_off = 0,
+        .status_set = 0,
+        .swrst_off = 0,
+        .has_swrst = false,
+    },
+    {
+        /* PM */
+        .name = "pic32cz.pm",
+        .base = 0x44010000,
+        .size = 0x1000,
+        .status_off = 0,
+        .status_set = 0,
+        .swrst_off = 0,
+        .has_swrst = false,
+    },
+    {
+        /* SUPC_STATUS: ADDVREGRDY */
+        .name = "pic32cz.supc",
+        .base = 0x44020000,
+        .size = 0x1000,
+        .status_off = 0x0c,
+        .status_set = 0x7 << 8,
+        .swrst_off = 0,
+        .has_swrst = false,
+    },
+    {
+        /* RSTC */
+        .name = "pic32cz.rstc",
+        .base = 0x44030000,
+        .size = 0x1000,
+        .status_off = 0,
+        .status_set = 0,
+        .swrst_off = 0,
+        .has_swrst = false,
+    },
+    {
+        /* OSCCTRL_STATUS: XOSCRDY | PLL0LOCK */
+        .name = "pic32cz.oscctrl",
+        .base = 0x44040000,
+        .size = 0x2000,
+        .status_off = 0x10,
+        .status_set = BIT(0) | BIT(24),
+        .swrst_off = 0,
+        .has_swrst = false,
+    },
+    {
+        /* OSC32KCTRL */
+        .name = "pic32cz.osc32kctrl",
+        .base = 0x44042000,
+        .size = 0x1000,
+        .status_off = 0,
+        .status_set = 0,
+        .swrst_off = 0,
+        .has_swrst = false,
+    },
+    {
+        /* GCLK_CTRLA.SWRST self-clears */
+        .name = "pic32cz.gclk",
+        .base = 0x44050000,
+        .size = 0x2000,
+        .status_off = 0,
+        .status_set = 0,
+        .swrst_off = 0x00,
+        .has_swrst = true,
+    },
+    {
+        /* MCLK_INTFLAG: CKRDY */
+        .name = "pic32cz.mclk",
+        .base = 0x44052000,
+        .size = 0x1000,
+        .status_off = 0x08,
+        .status_set = BIT(0),
+        .swrst_off = 0,
+        .has_swrst = false,
+    },
+    {
+        /* WDT */
+        .name = "pic32cz.wdt",
+        .base = 0x44070000,
+        .size = 0x1000,
+        .status_off = 0,
+        .status_set = 0,
+        .swrst_off = 0,
+        .has_swrst = false,
+    },
+    {
+        /* PORT */
+        .name = "pic32cz.port",
+        .base = 0x44840000,
+        .size = 0x2000,
+        .status_off = 0,
+        .status_set = 0,
+        .swrst_off = 0,
+        .has_swrst = false,
+    },
+    {
+        /* HSM */
+        .name = "pic32cz.hsm",
+        .base = 0x4f018000,
+        .size = 0x2000,
+        .status_off = 0,
+        .status_set = 0,
+        .swrst_off = 0,
+        .has_swrst = false,
+    },
+};
+
+static void vul_suc_pic32cz_stubs_init(MemoryRegion *system_memory)
+{
+    for (int i = 0; i < ARRAY_SIZE(pic32cz_stubs); i++) {
+        const Pic32czStub *info = &pic32cz_stubs[i];
+        Pic32czStubState *st = g_new0(Pic32czStubState, 1);
+
+        st->info = info;
+        st->regs = g_malloc0(info->size);
+        pic32cz_stub_fixup(st);
+        memory_region_init_io(&st->mr, NULL, &pic32cz_stub_ops, st,
+                              info->name, info->size);
+        memory_region_add_subregion(system_memory, info->base, &st->mr);
+    }
+}
+
+/* PIC32CZ peripherals used by the SuC bootloader */
+static void vul_suc_pic32cz_peripherals_init(VulSucMachineState *s,
+                                             DeviceState *nvic)
+{
+    DeviceState *dev;
+
+    vul_suc_pic32cz_stubs_init(get_system_memory());
+
+    /* SERCOM4: bootloader console */
+    dev = qdev_new(TYPE_SERCOM_USART);
+    qdev_prop_set_chr(dev, "chardev", serial_hd(PIC32CZ_SERCOM4_SERIAL));
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, PIC32CZ_SERCOM4_BASE);
+    for (int i = 0; i < SERCOM_USART_NUM_IRQ; i++) {
+        sysbus_connect_irq(SYS_BUS_DEVICE(dev), i,
+                           qdev_get_gpio_in(nvic, PIC32CZ_SERCOM4_0_IRQn + i));
+    }
 }
 
 static void vul_suc_init_board(MachineState *ms, vul_suc_board_info *board)
@@ -1154,8 +1401,9 @@ static void vul_suc_init_board(MachineState *ms, vul_suc_board_info *board)
      * 400fc000 hibernation module (unimplemented)
      * 400fd000 flash memory control (unimplemented)
      * 400fe000 system control
-     * 4400_0000 - DFFF_FFFF is reserved. Use for emulated peripherals
-     * 4400_0000 - sockdma mctp
+     * 5000_0000 - emulated peripherals, after the PIC32CZ peripherals
+     * 5000_0000 - sockdma mctp
+     * 5000_0800 - FPGA SPI
      */
 
     DeviceState *gpio_dev[7], *nvic;
@@ -1163,28 +1411,21 @@ static void vul_suc_init_board(MachineState *ms, vul_suc_board_info *board)
     qemu_irq gpio_out[7][8];
     qemu_irq adc;
     int sram_size;
-    int flash_size;
     I2CBus *i2c;
     DeviceState *dev;
     DeviceState *ssys_dev;
+    Clock *cpuclk;
     int i;
     int j;
     NICInfo *nd;
     MACAddr mac;
 
     MemoryRegion *sram = g_new(MemoryRegion, 1);
-    MemoryRegion *flash = g_new(MemoryRegion, 1);
     MemoryRegion *system_memory = get_system_memory();
 
     VulSucMachineState *s = VUL_SUC_MACHINE(ms);
 
-    flash_size = (((board->dc0 & 0xffff) + 1) << 1) * 1024;
     sram_size = ((board->dc0 >> 18) + 1) * 1024;
-
-    /* Flash programming is done via the SCU, so pretend it is ROM.  */
-    memory_region_init_rom(flash, NULL, "vul_suc.flash", flash_size,
-                           &error_fatal);
-    memory_region_add_subregion(system_memory, 0, flash);
 
     memory_region_init_ram(sram, NULL, "vul_suc.sram", sram_size,
                            &error_fatal);
@@ -1221,11 +1462,21 @@ static void vul_suc_init_board(MachineState *ms, vul_suc_board_info *board)
     sysbus_realize_and_unref(SYS_BUS_DEVICE(ssys_dev), &error_fatal);
 
     nvic = qdev_new(TYPE_ARMV7M);
-    qdev_prop_set_uint32(nvic, "num-irq", NUM_IRQ_LINES);
+    qdev_prop_set_uint32(nvic, "num-irq", PIC32CZ_NUM_IRQ_LINES);
     qdev_prop_set_string(nvic, "cpu-type", ms->cpu_type);
-    qdev_prop_set_bit(nvic, "enable-bitband", true);
-    qdev_connect_clock_in(nvic, "cpuclk",
-                          qdev_get_clock_out(ssys_dev, "SYSCLK"));
+    /*
+     * Like the PIC32CZ Boot ROM, start the bootloader from the vector table
+     * in BFM. A -kernel runtime is started directly from PFM instead.
+     */
+    qdev_prop_set_uint32(nvic, "init-nsvtor", ms->kernel_filename ?
+                         PIC32CZ_PFM_BASE : PIC32CZ_BFM_BASE);
+    /*
+     * The SuC bootloader and runtime program SysTick for the PIC32CZ
+     * 300 MHz CPU clock, so run SysTick at that rate.
+     */
+    cpuclk = clock_new(OBJECT(ms), "pic32cz-cpuclk");
+    clock_set_hz(cpuclk, PIC32CZ_CPU_HZ);
+    qdev_connect_clock_in(nvic, "cpuclk", cpuclk);
     /* This SoC does not connect the systick reference clock */
     object_property_set_link(OBJECT(nvic), "memory",
                              OBJECT(get_system_memory()), &error_abort);
@@ -1482,12 +1733,47 @@ static void vul_suc_init_board(MachineState *ms, vul_suc_board_info *board)
     create_unimplemented_device("flash-control", 0x400fd000, 0x1000);
 
     if (s->fpga_emu_sock) {
-        s->spi0 = SIFIVE_SPI(sifive_spi0_create_suc(0x44000800,
+        s->spi0 = SIFIVE_SPI(sifive_spi0_create_suc(0x50000800,
             qdev_get_gpio_in(nvic, 7), s->fpga_emu_sock,
             s->fpga_emu_is_server, false));
     }
 
-    armv7m_load_kernel(ARM_CPU(first_cpu), ms->kernel_filename, 0, flash_size);
+    vul_suc_pic32cz_peripherals_init(s, nvic);
+
+    armv7m_load_kernel(ARM_CPU(first_cpu), ms->kernel_filename,
+                       PIC32CZ_PFM_BASE, PIC32CZ_PFM_SIZE);
+}
+
+/*
+ * Model the PIC32CZ flash map used by the real SuC so that the HW bootloader
+ * and the A/B runtime images can boot from the CFI flash image.
+ */
+static void vul_suc_pic32cz_flash_init(VulSucMachineState *s,
+                                       MemoryRegion *system_memory)
+{
+    SysBusDevice *sbd;
+
+    s->nvm = qdev_new(TYPE_PIC32CZ_NVM);
+    object_property_add_child(OBJECT(s), "nvm", OBJECT(s->nvm));
+    object_property_set_link(OBJECT(s->nvm), "flash", OBJECT(s->suc_flash),
+                             &error_abort);
+    qdev_prop_set_uint32(s->nvm, "cfm-offset", VUL_SUC_PFLASH_CFM_OFF);
+    qdev_prop_set_uint32(s->nvm, "bfm-a-offset", VUL_SUC_PFLASH_BFM_A_OFF);
+    qdev_prop_set_uint32(s->nvm, "bfm-b-offset", VUL_SUC_PFLASH_BFM_B_OFF);
+    qdev_prop_set_uint32(s->nvm, "pfm-a-offset", VUL_SUC_PFLASH_PFM_A_OFF);
+    qdev_prop_set_uint32(s->nvm, "pfm-b-offset", VUL_SUC_PFLASH_PFM_B_OFF);
+    sbd = SYS_BUS_DEVICE(s->nvm);
+    sysbus_realize_and_unref(sbd, &error_fatal);
+
+    memory_region_add_subregion(system_memory, PIC32CZ_BFM_BASE,
+        sysbus_mmio_get_region(sbd, PIC32CZ_NVM_MMIO_BFM));
+    memory_region_add_subregion(system_memory, PIC32CZ_CFM_BASE,
+        sysbus_mmio_get_region(sbd, PIC32CZ_NVM_MMIO_CFM));
+    memory_region_add_subregion(system_memory, PIC32CZ_PFM_BASE,
+        sysbus_mmio_get_region(sbd, PIC32CZ_NVM_MMIO_PFM));
+    sysbus_mmio_map(sbd, PIC32CZ_NVM_MMIO_FCW, PIC32CZ_FCW_BASE);
+    /* The CFI flash is programmed through the swap-aware port */
+    sysbus_mmio_map(sbd, PIC32CZ_NVM_MMIO_PORT, VUL_SUC_PFLASH_BASE);
 }
 
 static void vul_suc_init(MachineState *machine)
@@ -1502,7 +1788,14 @@ static void vul_suc_init(MachineState *machine)
 
     MemoryRegion *system_memory = get_system_memory();
 
-    vul_suc_flash_map1(s->suc_flash, 0x60000000, 0x1000000, system_memory);
+    vul_suc_flash_realize(s->suc_flash, VUL_SUC_PFLASH_SIZE);
+
+    if (!machine->kernel_filename && !pflash_cfi01_get_blk(s->suc_flash)) {
+        error_report("vul_suc: needs either -kernel or a flash image "
+                     "(-machine pflash1=<blockdev node>)");
+        exit(1);
+    }
+    vul_suc_pic32cz_flash_init(s, system_memory);
 
     vul_suc_init_board(machine, &vul_suc_boards[0]);
 }
@@ -1510,11 +1803,17 @@ static void vul_suc_init(MachineState *machine)
 static void vul_suc_class_init(ObjectClass *oc, const void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
+    /* The PIC32CZ CPU */
+    static const char * const valid_cpu_types[] = {
+        ARM_CPU_TYPE_NAME("cortex-m7"),
+        NULL
+    };
 
-    mc->desc = "Vulcano SuC (Cortex-M3)";
+    mc->desc = "Vulcano SuC (Cortex-M7)";
     mc->init = vul_suc_init;
     mc->ignore_memory_transaction_failures = true;
-    mc->default_cpu_type = ARM_CPU_TYPE_NAME("cortex-m3");
+    mc->default_cpu_type = ARM_CPU_TYPE_NAME("cortex-m7");
+    mc->valid_cpu_types = valid_cpu_types;
 
 
     for (int i = 0; i < ARRAY_SIZE(sockdma_infos); i++) {
