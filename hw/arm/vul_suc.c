@@ -39,6 +39,7 @@
 #include "ui/input.h"
 #include "hw/block/flash.h"
 #include "hw/misc/vul_fpga.h"
+#include "hw/i2c/amd_qemu_i2c.h"
 #include "hw/ssi/sifive_spi.h"
 #include "hw/misc/pic32cz_nvm.h"
 #include "hw/char/sercom_usart.h"
@@ -128,6 +129,16 @@ static sockdma_info sockdma_infos[] = {
 #define TYPE_VUL_SUC_MACHINE MACHINE_TYPE_NAME("vul_suc")
 OBJECT_DECLARE_SIMPLE_TYPE(VulSucMachineState, VUL_SUC_MACHINE);
 
+/* Generic I2C controllers (amd-qemu-i2c): MMIO base and NVIC line. */
+static const struct {
+    hwaddr base;
+    int irq;
+} vul_suc_i2c_map[] = {
+    { 0x40002000, 9 },
+    { 0x40021000, 37 },
+    { 0x50002000, 38 },
+};
+
 struct VulSucMachineState {
     MachineState parent;
     struct {
@@ -140,6 +151,7 @@ struct VulSucMachineState {
     DeviceState *fpga_dev;
     SiFiveSPIState *spi0;
     DeviceState *nvm;
+    char *i2c_bus[ARRAY_SIZE(vul_suc_i2c_map)];
 };
 
 /* System controller.  */
@@ -184,6 +196,18 @@ static void vul_suc_set_fpga_emu_conf(Object *obj, const char *val, Error **errp
     VulSucMachineState *s = VUL_SUC_MACHINE(obj);
     s->fpga_emu_sock = g_strdup(val);
 }
+
+#define VUL_SUC_I2C_BUS_SETTER(i)                                           \
+    static void vul_suc_set_i2c##i##_bus(Object *obj, const char *val,      \
+                                         Error **errp)                      \
+    {                                                                       \
+        VulSucMachineState *vul_suc_state = VUL_SUC_MACHINE(obj);           \
+        g_free(vul_suc_state->i2c_bus[i]);                                  \
+        vul_suc_state->i2c_bus[i] = g_strdup(val);                          \
+    }
+VUL_SUC_I2C_BUS_SETTER(0)
+VUL_SUC_I2C_BUS_SETTER(1)
+VUL_SUC_I2C_BUS_SETTER(2)
 
 static void vul_suc_set_fpga_emu_mode_conf(Object *obj, const char *val, Error **errp)
 {
@@ -1374,7 +1398,7 @@ static void vul_suc_init_board(MachineState *ms, vul_suc_board_info *board)
      * http://www.ti.com/lit/ds/symlink/lm3s6965.pdf
      *
      * 40000000 wdtimer
-     * 40002000 i2c (unimplemented)
+     * 40002000 i2c (amd-qemu-i2c i2c0)
      * 40004000 GPIO
      * 40005000 GPIO
      * 40006000 GPIO
@@ -1384,7 +1408,7 @@ static void vul_suc_init_board(MachineState *ms, vul_suc_board_info *board)
      * 4000d000 UART
      * 4000e000 UART
      * 40020000 i2c
-     * 40021000 i2c (unimplemented)
+     * 40021000 i2c (amd-qemu-i2c i2c1)
      * 40024000 GPIO
      * 40025000 GPIO
      * 40026000 GPIO
@@ -1404,6 +1428,7 @@ static void vul_suc_init_board(MachineState *ms, vul_suc_board_info *board)
      * 5000_0000 - emulated peripherals, after the PIC32CZ peripherals
      * 5000_0000 - sockdma mctp
      * 5000_0800 - FPGA SPI
+     * 5000_2000 - amd-qemu-i2c i2c2 (clear of the 4 KiB FPGA SPI window)
      */
 
     DeviceState *gpio_dev[7], *nvic;
@@ -1723,14 +1748,29 @@ static void vul_suc_init_board(MachineState *ms, vul_suc_board_info *board)
     /* Add dummy regions for the devices we don't implement yet,
      * so guest accesses don't cause unlogged crashes.
      */
-    create_unimplemented_device("i2c-0", 0x40002000, 0x1000);
-    create_unimplemented_device("i2c-2", 0x40021000, 0x1000);
     create_unimplemented_device("PWM", 0x40028000, 0x1000);
     create_unimplemented_device("QEI-0", 0x4002c000, 0x1000);
     create_unimplemented_device("QEI-1", 0x4002d000, 0x1000);
     create_unimplemented_device("analogue-comparator", 0x4003c000, 0x1000);
     create_unimplemented_device("hibernation", 0x400fc000, 0x1000);
     create_unimplemented_device("flash-control", 0x400fd000, 0x1000);
+
+    /*
+     * Controllers on the same bus name share a bus; a bus is extended to
+     * another QEMU with -device amd-qemu-i2c-link,bus-name=...
+     */
+    for (i = 0; i < ARRAY_SIZE(vul_suc_i2c_map); i++) {
+        g_autofree char *name = g_strdup_printf("i2c%d", i);
+
+        dev = qdev_new(TYPE_AMD_QEMU_I2C);
+        object_property_add_child(OBJECT(ms), name, OBJECT(dev));
+        qdev_prop_set_string(dev, "bus-name",
+                             s->i2c_bus[i] ? s->i2c_bus[i] : name);
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, vul_suc_i2c_map[i].base);
+        sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0,
+                           qdev_get_gpio_in(nvic, vul_suc_i2c_map[i].irq));
+    }
 
     if (s->fpga_emu_sock) {
         s->spi0 = SIFIVE_SPI(sifive_spi0_create_suc(0x50000800,
@@ -1830,6 +1870,17 @@ static void vul_suc_class_init(ObjectClass *oc, const void *data)
     object_class_property_add_str(oc, "fpga-emu-mode", NULL, vul_suc_set_fpga_emu_mode_conf);
     object_class_property_set_description(oc, "fpga-emu-mode",
                                           "The FPGA emulation mode, either 'client' or 'server'.");
+
+    object_class_property_add_str(oc, "i2c0-bus", NULL, vul_suc_set_i2c0_bus);
+    object_class_property_add_str(oc, "i2c1-bus", NULL, vul_suc_set_i2c1_bus);
+    object_class_property_add_str(oc, "i2c2-bus", NULL, vul_suc_set_i2c2_bus);
+    for (int i = 0; i < ARRAY_SIZE(vul_suc_i2c_map); i++) {
+        g_autofree char *prop = g_strdup_printf("i2c%d-bus", i);
+
+        object_class_property_set_description(oc, prop,
+            "Bus name of this I2C controller (default i2cN); controllers "
+            "with the same name share a bus.");
+    }
 }
 
 static void vul_suc_instance_init(Object *obj)
