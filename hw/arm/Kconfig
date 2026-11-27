@@ -259,6 +259,7 @@ config VUL_SUC
     select SIFIVE_SPI
     select PIC32CZ_NVM
     select SERCOM_USART
+    select AMD_QEMU_I2C
 
 config STM32VLDISCOVERY
     bool
