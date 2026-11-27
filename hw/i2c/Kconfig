@@ -10,6 +10,10 @@ config SMBUS
     bool
     select I2C
 
+config AMD_QEMU_I2C
+    bool
+    select I2C
+
 config SMBUS_EEPROM
     bool
     select SMBUS
